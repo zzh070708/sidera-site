@@ -120,6 +120,9 @@
   canvas.addEventListener('webglcontextrestored', function () {
     ctxLost = false;
     clearTimeout(ctxTimer);
+    /* 渲染器重建上下文后会丢清屏色，默认透明黑会把深蓝星空底变暗。
+       清屏色属于渲染状态，必须在恢复事件里重新应用。 */
+    renderer.setClearColor(0x030510, 1);
     if (window.GX && GX.clearSoftMsg) GX.clearSoftMsg();
   }, false);
 
@@ -575,14 +578,18 @@
   window.setBortle = setBortle;
 
   /* 可见星统计（数据可视化模块的数据源，全部来自真实星表） */
+  var VIS_BANDS = null;
   function visStats() {
-    var out = [];
-    for (var b = 0; b < 9; b++) {
-      var lim = BORTLE_LIMIT[b], cnt = 0;
-      for (var i = 0; i < REAL_N; i++) { if (magOf(i) <= lim) cnt++; }
-      out.push({ bortle: b + 1, limit: lim, visible: cnt });
+    if (!VIS_BANDS) {
+      var out = [];
+      for (var b = 0; b < 9; b++) {
+        var lim = BORTLE_LIMIT[b], cnt = 0;
+        for (var i = 0; i < REAL_N; i++) { if (magOf(i) <= lim) cnt++; }
+        out.push({ bortle: b + 1, limit: lim, visible: cnt });
+      }
+      VIS_BANDS = out;
     }
-    return { total: REAL_N, bands: out, current: BORTLE };
+    return { total: REAL_N, bands: VIS_BANDS, current: BORTLE };
   }
 
   /* ---------- 星官高亮：金线连真实恒星 ---------- */

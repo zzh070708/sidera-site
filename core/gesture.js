@@ -19,7 +19,8 @@
     curMX: null, curMY: null,
     dwellT: 0, dwellX: 0, dwellY: 0, coolUntil: 0, errs: 0, lastAct: 0,
     dwellUI: null, hoverUI: null, scrollY: null, splitDrag: false, rangeEl: null, flightNoted: false,
-    rearmUI: null, rearmX: 0, rearmY: 0, rearmNoted: false
+    rearmUI: null, rearmX: 0, rearmY: 0, rearmNoted: false,
+    loopTicks: 0, detects: 0, lastDetectAt: 0, maxDetectMs: 0, lastErr: null
   };
   var video = null, dot = null, ring = null, ringCircle = null, hud = null, statusEl = null;
   var api = { onStop: null, onStatus: null };
@@ -267,12 +268,14 @@
       state.splitDrag = false; state.rangeEl = null; state.scrollY = null;
     }
     if (state.pinch) {
+      state.rearmUI = null; state.rearmNoted = false;
       zoomFrame(pinchR, t);
       if (dot) dot.style.display = 'none';
       return;
     }
 
     if (openPalm(l)) {
+      state.rearmUI = null; state.rearmNoted = false;
       if (state.palm !== true) { state.palm = true; state.slideX = null; }
       state.splitDrag = false; state.rangeEl = null; state.scrollY = null;
       slide(l);
@@ -284,6 +287,7 @@
     state.slideX = null;
 
     if (twoFinger(l)) {
+      state.rearmUI = null; state.rearmNoted = false;
       state.splitDrag = false; state.rangeEl = null;
       scrollFrame(l);
       if (dot) dot.style.display = 'none';
@@ -388,17 +392,23 @@
 
   function loop() {
     if (!state.on) return;
-    var G = window.GROUND;
-    state.raf = (video && video.requestVideoFrameCallback)
-      ? video.requestVideoFrameCallback(loop) : requestAnimationFrame(loop);
-    if (!video || video.readyState < 2) return;
+    /* 视频帧回调在部分浏览器/窗口状态下会静默停摆；识别循环改由页面 rAF 驱动，
+       仍用 currentTime 去重，既不重复推理同一帧，也不依赖那条回调。 */
+    state.raf = requestAnimationFrame(loop);
+    state.loopTicks++;
+    if (!video || video.readyState < 2 || !state.lm) return;
     var now = performance.now();
     if (now - state.lastT < 33) return;
     if (video.currentTime === state.lastVideoTime) return;
     state.lastVideoTime = video.currentTime;
     state.lastT = now;
+    var detectAt = performance.now();
     try {
       var res = state.lm.detectForVideo(video, Math.round(now));
+      var detectMs = performance.now() - detectAt;
+      state.detects++;
+      state.lastDetectAt = Math.round(now);
+      if (detectMs > state.maxDetectMs) state.maxDetectMs = Math.round(detectMs);
       var hs = res && res.landmarks;
       if (hs && hs.length) {
         var l = hs[0];
@@ -419,8 +429,10 @@
                     : '手在画面里了';
         if (kind !== state.lastKind) { state.lastKind = kind; note(kind); }
         state.errs = 0;
+        state.lastErr = null;
         act(l);
       } else {
+        state.rearmUI = null; state.rearmNoted = false;
         state.palm = null; state.slideX = null; state.slideY = null; state.dwellT = 0;
         state.curMX = null; state.curMY = null;
         state.splitDrag = false; state.rangeEl = null; state.scrollY = null;
@@ -430,6 +442,7 @@
         if (dot) dot.style.display = 'none';
       }
     } catch (e) {
+      state.lastErr = String((e && e.message) || e);
       state.errs++;
       if (state.errs > 5) { note('手势识别中断，已自动关闭。'); stop(true, true); }
     }
@@ -489,10 +502,7 @@
     if (state.loadWatch) { clearInterval(state.loadWatch); state.loadWatch = 0; }
     state.loading = false;
     if (state.raf) {
-      try {
-        if (video && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(state.raf);
-        else cancelAnimationFrame(state.raf);
-      } catch (e) { /* noop */ }
+      try { cancelAnimationFrame(state.raf); } catch (e) { /* noop */ }
       state.raf = 0;
     }
     state.on = false;
@@ -510,6 +520,7 @@
     state.slideX = null; state.slideY = null; state.pinchS = 0; state.zoomT = 0;
     state.curMX = null; state.curMY = null;
     state.splitDrag = false; state.rangeEl = null; state.scrollY = null;
+    state.rearmUI = null; state.rearmNoted = false; state.rearmX = 0; state.rearmY = 0;
     if (notify !== false && api.onStop) api.onStop();
   }
 
@@ -605,6 +616,8 @@
       state.on = true;
       state.loading = false;
       state.lastKind = null;
+      state.lastVideoTime = -1; state.lastT = 0; state.errs = 0; state.lastErr = null;
+      state.loopTicks = 0; state.detects = 0; state.lastDetectAt = 0; state.maxDetectMs = 0;
       note('掌心朝镜头 · 张掌转视角 · 捏合变焦 · 指住选中 · 指住滑杆/分界线左右拖 · 双指并拢上下滚页');
       if (api.onStop) api.onStop();
       loop();
@@ -681,7 +694,11 @@
     };
     GESTURE.__state = function () {
       return { on: state.on, loading: state.loading, model: !!state.lm, kind: state.lastKind || null,
-               mode: mode(), bortle: (window.GX && window.GX.getBortle) ? window.GX.getBortle() : null };
+               mode: mode(), bortle: (window.GX && window.GX.getBortle) ? window.GX.getBortle() : null,
+               loopTicks: state.loopTicks, detects: state.detects,
+               lastDetectAt: state.lastDetectAt, maxDetectMs: state.maxDetectMs,
+               errs: state.errs, lastErr: state.lastErr,
+               rearm: state.rearmUI ? (state.rearmUI.id || state.rearmUI.tagName) : null };
     };
 
     /* 对一张图（URL / HTMLImageElement / HTMLVideoElement）跑真模型推理 */

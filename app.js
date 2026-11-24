@@ -8,7 +8,7 @@
  * ==========================================================================*/
 (function () {
   'use strict';
-  window.__SIDERA_VER__ = '20261124a';
+  window.__SIDERA_VER__ = '20261124b';
   var $ = function (id) { return document.getElementById(id); };
   if (!window.GX) {
     var f = $('fatal'); f.style.display = 'block';
@@ -327,16 +327,17 @@
     var el = $('gestRead');
     if (!el) return;
     if (!(window.GESTURE && GESTURE.active())) { if (el.textContent) setLines(el, []); return; }
-    var b = GX.getBortle(), st = GX.visStats();
-    if (!gestBase) gestBase = { b: b };
-    var baseB = gestBase.b;
-    var visAt = function (bb) {
-      if (!G || !G.visibleStats) return st.bands[bb - 1].visible;
-      return G.visibleStats(st.bands[bb - 1].limit).visible;
-    };
-    var vis = visAt(b), baseVis = visAt(baseB);
+    var b = GX.getBortle();
     var head, body, note = '';
     if (GX.mode() === 'ground') {
+      var st = GX.visStats();
+      if (!gestBase) gestBase = { b: b };
+      var baseB = gestBase.b;
+      var visAt = function (bb) {
+        if (!G || !G.visibleStats) return st.bands[bb - 1].visible;
+        return G.visibleStats(st.bands[bb - 1].limit).visible;
+      };
+      var vis = visAt(b), baseVis = visAt(baseB);
       head = 'Bortle ' + b + ' · ' + BORTLE_NAMES[b - 1];
       body = '头顶可见 ' + vis.toLocaleString() + ' 颗 · 比暗空少 ' +
         Math.max(0, visAt(1) - vis).toLocaleString() + ' 颗';

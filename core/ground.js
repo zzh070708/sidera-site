@@ -13,6 +13,9 @@
 
   var R_SKY = 40000, DEG = Math.PI / 180;
   var BORTLE_LIMIT = [7.6, 7.1, 6.6, 6.1, 5.6, 5.1, 4.6, 4.1, 3.5];
+  var MODEL_VERSION = 'ground-horizon-extinction-v1', CATALOG = 'HYG v4.0';
+  var EXTINCTION = 0.26, HORIZON = 0.01, TIME_ZONE = '+08:00';
+  var predictedAtMs = 0, observationNight = '';
   var CITIES = [
     { name: '北京', lat: 39.9042, lon: 116.4074 },
     { name: '上海', lat: 31.2304, lon: 121.4737 },
@@ -271,7 +274,7 @@
     sg.setAttribute('aMag', new THREE.BufferAttribute(m, 1));
     sg.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
     starGeoPos = p;
-    starMat = starMaterial({ scale: 2.5, max: 24, limit: 4.6, ext: 0.26, dim: 1, spike: 1, twinkle: 1 });
+    starMat = starMaterial({ scale: 2.5, max: 24, limit: 4.6, ext: EXTINCTION, dim: 1, spike: 1, twinkle: 1 });
     var stars = new THREE.Points(sg, starMat);
     stars.renderOrder = 0;
     scene.add(stars);
@@ -295,6 +298,12 @@
   }
 
   /* ---------- 时间 / 地点 ---------- */
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function cityIso(ms) {
+    var d = new Date(ms + 8 * 3600000);
+    return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()) +
+      'T' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()) + ':' + pad2(d.getUTCSeconds()) + TIME_ZONE;
+  }
   function setSite(c, h) {    if (c) city = c;
     if (typeof h === 'number') hours = h;
     /* 「今夜」= 离此刻最近的那个 18:00 起算的夜。
@@ -308,6 +317,9 @@
     if (anchor - nowCity > 12 * 3600000) anchor -= 86400000;
     else if (nowCity - anchor > 12 * 3600000) anchor += 86400000;
     var utcMs = anchor + (hours - 18) * 3600000 - 8 * 3600000;   // 城市当地 18:00 锚点 → 真实 UTC
+    predictedAtMs = utcMs;
+    var night = new Date(anchor);
+    observationNight = night.getUTCFullYear() + '-' + pad2(night.getUTCMonth() + 1) + '-' + pad2(night.getUTCDate());
     var dDays = (utcMs - Date.UTC(2000, 0, 1, 12, 0, 0)) / 86400000;
     var gmst = (18.697374558 + 24.06570982441908 * dDays) % 24;
     var lst = ((gmst + city.lon / 15) % 24 + 24) % 24;
@@ -381,14 +393,14 @@
   var _vs = new THREE.Vector3();
   function visibleStats(limit) {
     if (!built) return null;
-    var key = limit.toFixed(2) + '|' + lstDeg.toFixed(3);
+    var key = limit.toFixed(2) + '|' + lstDeg.toFixed(3) + '|' + city.lat.toFixed(5);
     if (visCache && visCache.key === key) return visCache.val;
     var cnt = 0, above = 0;
     for (var i = 0; i < starN; i++) {
       _vs.set(starGeoPos[i * 3], starGeoPos[i * 3 + 1], starGeoPos[i * 3 + 2]).normalize().applyMatrix3(rot);
-      if (_vs.y <= 0.01) continue;
+      if (_vs.y <= HORIZON) continue;
       above++;
-      var m = magOf(i) + 0.26 * (1 / Math.max(_vs.y, 0.02) - 1);
+      var m = magOf(i) + EXTINCTION * (1 / Math.max(_vs.y, 0.02) - 1);
       if (m <= limit) cnt++;
     }
     var val = { visible: cnt, above: above, total: starN };
@@ -405,9 +417,9 @@
     if (az < 0) az += 360;
     var lim = BORTLE_LIMIT[bortle - 1];
     var am = 1 / Math.max(_v.y, 0.02);
-    var mEff = magOf(i) + 0.26 * (am - 1);
-    return { alt: alt, az: az, mag: magOf(i), mEff: mEff, up: _v.y > 0.01,
-             visible: _v.y > 0.01 && mEff <= lim, limit: lim };
+    var mEff = magOf(i) + EXTINCTION * (am - 1);
+    return { alt: alt, az: az, mag: magOf(i), mEff: mEff, up: _v.y > HORIZON,
+             visible: _v.y > HORIZON && mEff <= lim, limit: lim };
   }
 
   /* ---------- 视角 ---------- */
@@ -568,7 +580,7 @@
       _v.set(starGeoPos[i * 3], starGeoPos[i * 3 + 1], starGeoPos[i * 3 + 2]).normalize().applyMatrix3(rot);
       if (_v.y <= 0.10) continue;                                   // 贴地平线的会被楼和消光吃掉，不列
       var am = 1 / Math.max(_v.y, 0.02);
-      var mEff = magOf(i) + 0.26 * (am - 1);
+      var mEff = magOf(i) + EXTINCTION * (am - 1);
       if (mEff > lim) continue;
       _bl.push({ i: i, mag: magOf(i), mEff: mEff,
                  alt: Math.asin(_v.y) / DEG,
@@ -591,15 +603,15 @@
     if (!built || !(i >= 0) || i >= starN) return null;
     if (typeof rDeg !== 'number') rDeg = WINDOW_R;
     _wcA.set(starGeoPos[i * 3], starGeoPos[i * 3 + 1], starGeoPos[i * 3 + 2]).normalize().applyMatrix3(rot);
-    if (_wcA.y <= 0.01) return null;
+    if (_wcA.y <= HORIZON) return null;
     var lim = BORTLE_LIMIT[bortle - 1];
     var cosR = Math.cos(rDeg * DEG);
     var cnt = 0;
     for (var k = 0; k < starN; k++) {
       _wcB.set(starGeoPos[k * 3], starGeoPos[k * 3 + 1], starGeoPos[k * 3 + 2]).normalize().applyMatrix3(rot);
-      if (_wcB.y <= 0.01) continue;
+      if (_wcB.y <= HORIZON) continue;
       if (_wcA.dot(_wcB) < cosR) continue;
-      var m = magOf(k) + 0.26 * (1 / Math.max(_wcB.y, 0.02) - 1);
+      var m = magOf(k) + EXTINCTION * (1 / Math.max(_wcB.y, 0.02) - 1);
       if (m <= lim) cnt++;
     }
     return {
@@ -620,7 +632,9 @@
   }
   function state() {
     return { city: city.name, lat: city.lat, lon: city.lon, hours: hours, lst: lstDeg, bortle: bortle,
-             yaw: yaw / DEG, pitch: pitch / DEG, fov: fov };
+             yaw: yaw / DEG, pitch: pitch / DEG, fov: fov,
+             predictedAt: cityIso(predictedAtMs), nightKey: observationNight, timeZone: TIME_ZONE,
+             modelVersion: MODEL_VERSION, catalog: CATALOG, horizon: HORIZON, extinction: EXTINCTION };
   }
 
   window.GROUND = {

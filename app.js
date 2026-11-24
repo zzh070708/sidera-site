@@ -8,7 +8,7 @@
  * ==========================================================================*/
 (function () {
   'use strict';
-  window.__SIDERA_VER__ = '20261124b';
+  window.__SIDERA_VER__ = '20261124d';
   var $ = function (id) { return document.getElementById(id); };
   if (!window.GX) {
     var f = $('fatal'); f.style.display = 'block';
@@ -1059,78 +1059,105 @@
 
   /* ---------- 出门核对：把可证伪性交回用户 ----------
      确定性预测：以某颗星为中心、伸臂一拳宽（直径 10°，即角半径 5°）的天区窗口，此刻肉眼可见几颗。
-     口径与屏幕渲染完全同一套（相同消光公式、相同 Bortle 门限），用户出门可数、可打脸。
+     计数口径由 GROUND.windowCount 统一给出（地平线硬门控 + 大气消光 + Bortle 极限星等），
+     屏幕只做额外的视觉渐隐，不参与预测计数。
      窗口数字一律取自内核（GROUND.windowCount 的默认角半径 + fistWidth 的拳宽），
      文案不再自己写死角度——2026-11-13 口径审查查出文案与实算各说各话：
      文案写「一拳宽≈10°」，内核却按 10° 角半径取窗（直径 20°、面积 4 倍），对外预测被放大 4.5 倍。 */
-  var verifyInfo = null;
-  /* 「换一局」必须真换。2026-11-19 用户实测：点四次卡面一字不差、屏幕上毫无动静——
-     原实现只把同一颗最亮锚点重算一遍，同参数下必然得到同一张卡，
-     一个写着「换一局」的按钮换不出第二局，等于没有反馈也没有功能。
-     现在按「条件签名」走游标：签名 = 城市 + 钟点 + 光害档，正是决定这张卡的三个量。
-       · 签名变了（拖滑块/换城市/换光害）→ 候选池本身变了，游标回到第 1 局，
-         这样「同一套条件必得同一张卡」的可复现性不被点击顺序污染；
-       · 签名没变、只有用户点按钮 → 游标 +1，换下一颗星，走完回到第 1 局。
-     自动重绘（滑块、切节、清单刷新）不带 advance，游标原地不动，卡不会被后台跳走。 */
+  var verifyInfo = null, verifyDirty = false;
   var verifyCursor = { sig: '', round: 0 };
+  function verifySignature(st) {
+    return [st.city, st.lat, st.lon, st.predictedAt, st.bortle].join('|');
+  }
+  function nowCityIso() {
+    var d = new Date(Date.now() + 8 * 3600000);
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) +
+      'T' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds()) + '+08:00';
+  }
   function verifyPool() {
     var cands = G.brightest(30), pool = [];
     for (var i = 0; i < cands.length; i++) {
       if (cands[i].alt >= 25 && cands[i].alt <= 75) pool.push(cands[i]);
     }
-    if (!pool.length && cands.length) pool.push(cands[0]);   // 全低或全高时退回最亮一颗，别出空卡
+    if (!pool.length && cands.length) pool.push(cands[0]);
     return pool;
   }
-  function renderVerify(advance) {
-    var el = $('verifyCard');
-    if (!el || !G || !G.windowCount) return;
-    var st = G.state();
-    var sig = [st.city, st.hours, st.bortle].join('|');
+  function lockPrediction(advance) {
+    var st = G.state(), sig = verifySignature(st);
     if (sig !== verifyCursor.sig) { verifyCursor.sig = sig; verifyCursor.round = 0; }
-    else if (advance) verifyCursor.round++;
-    var pool = verifyPool();
-    var rounds = pool.length;
+    else if (advance && verifyInfo && !verifyDirty) verifyCursor.round++;
+    var pool = verifyPool(), rounds = pool.length;
     var round = rounds ? verifyCursor.round % rounds : 0;
     var anchor = rounds ? pool[round] : null;
     var w = anchor ? G.windowCount(anchor.i) : null;
-    var fist = (G.fistWidth ? G.fistWidth() : 10);
-    verifyInfo = w ? { anchor: w.anchor, name: starNameOf(w.anchor), count: w.count,
-                       limit: w.limit, bortle: w.bortle, alt: w.alt, az: w.az,
-                       fist: fist, r: w.radius, round: round + 1, rounds: rounds } : null;
-    /* 卡上的钟点随卡一起冻结进隐藏字段：内核拿它和「实际计数时刻」比，
-       不能改用记录那一刻的实时值——否则用户把时间滑走后回来补录，差值会被抹平。 */
-    $('m1CardHours').value = verifyInfo ? String(st.hours) : '';
-    el.textContent = '';
     if (!w) {
-      var tag0 = document.createElement('span'); tag0.className = 'vround'; tag0.textContent = '无可用窗口';
-      el.appendChild(tag0);
-      el.appendChild(document.createTextNode(' '));
-      el.appendChild(document.createTextNode('此刻头顶没有可核对的星——这本身就是一条核对结果：把光害等级调暗一档，或换个时刻再试。'));
+      verifyInfo = null; verifyDirty = false;
+      $('m1CardHours').value = '';
       return;
     }
-    /* 局数徽章先落在卡首：一眼看出「这一点确实换了」，也是导出的第几局的可追溯标记 */
+    var id = 'pred-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    verifyInfo = window.M1.freezePrediction({
+      schema: 3, predictionId: id, protocolVersion: 'M1-3',
+      modelVersion: st.modelVersion, createdAt: nowCityIso(), catalog: st.catalog,
+      predictedAt: st.predictedAt, timeZone: st.timeZone, nightKey: st.nightKey,
+      city: st.city, place: st.city, lat: st.lat, lon: st.lon,
+      bortle: w.bortle, limit: w.limit, count: w.count,
+      anchor: w.anchor, name: starNameOf(w.anchor), az: w.az, alt: w.alt,
+      window: 'fist', windowRadius: w.radius, windowDiameter: G.fistWidth(),
+      horizon: st.horizon, extinction: st.extinction,
+      round: round + 1, rounds: rounds
+    });
+    verifyDirty = false;
+    $('m1CardHours').value = String(st.hours);
+    $('btnVerify').textContent = '按当前条件换一局并锁定';
+  }
+  function renderVerify(advance) {
+    var el = $('verifyCard');
+    if (!el || !G || !G.windowCount || !window.M1) return;
+    if (advance) lockPrediction(true);
+    if (verifyInfo) {
+      var sig = verifySignature(G.state());
+      if (sig !== verifyCursor.sig) {
+        verifyCursor.sig = sig; verifyCursor.round = 0; verifyDirty = true;
+      }
+    }
+    el.textContent = '';
+    if (!verifyInfo) {
+      var tag0 = document.createElement('span'); tag0.className = 'vround'; tag0.textContent = '尚未生成预测';
+      el.appendChild(tag0);
+      el.appendChild(document.createTextNode(' 点击「按当前条件换一局并锁定」后才会生成预测；当前没有可用的高空恒星窗口时，请先调整时刻或光害。'));
+      return;
+    }
+    var w = verifyInfo;
+    if (verifyDirty) {
+      var dirty = document.createElement('div'); dirty.className = 'p-note bad';
+      dirty.textContent = '当前地点、时刻或光害已改变；下面仍是原来锁定的预测，不会被偷偷改写。要让新预测生效，请点「按当前条件换一局并锁定」。';
+      el.appendChild(dirty);
+    }
     var tag = document.createElement('span'); tag.className = 'vround';
-    tag.textContent = '第 ' + (round + 1) + ' 局 / 共 ' + rounds + ' 局';
+    tag.textContent = '已锁定 · 第 ' + w.round + ' / ' + w.rounds + ' 局';
     el.appendChild(tag);
-    el.appendChild(document.createTextNode(' '));   // 徽章是 inline-block，补一个真空格让纯文本读取也断开
-    el.appendChild(document.createTextNode('今晚走出去数一遍：面向' + azName(w.az) + ' ' + Math.round(w.az) +
-      '°，抬头到' + altBand(w.alt) + '（' + Math.round(w.alt) + '°），找到' + starNameOf(w.anchor) +
-      '——伸出一臂，握拳，一拳宽≈' + fist + '°（即以它为中心、半径 ' + w.radius + '° 的天区）。我们预测：这个窗口里此刻肉眼可见 '));
+    el.appendChild(document.createTextNode(' '));
+    el.appendChild(document.createTextNode('预测时刻 ' + w.predictedAt + '（当地 ' + w.nightKey +
+      ' 观测夜）。面向' + azName(w.az) + ' ' + Math.round(w.az) +
+      '°，抬头到' + altBand(w.alt) + '（' + Math.round(w.alt) + '°），找到' + w.name +
+      '——伸出一臂，握拳，一拳宽≈' + w.windowDiameter + '°（以它为中心、半径 ' + w.windowRadius + '°）。模型估算这个窗口内肉眼可见 '));
     var b = document.createElement('b'); b.textContent = w.count + ' 颗';
     el.appendChild(b);
-    el.appendChild(document.createTextNode('（含它本身；按 Bortle ' + w.bortle + ' · 极限星等 ' +
-      w.limit.toFixed(1) + ' 计算）。数法：裸眼、先暗适应 ' + window.M1.DARK_MIN + ' 分钟、只数窗口内、±' + window.M1.TOL +
-      ' 颗算吻合。明显更少：那边比所选等级更亮，或楼挡住了——挪个位置、或把等级调高再试；明显更多：你比所选等级更暗。这串数字出自 HYG v4.0 真实星表 + 大气消光模型，是能被你本人推翻的预测——能被推翻，才算真预测。'));
+    el.appendChild(document.createTextNode('（含锚星；Bortle ' + w.bortle + ' · 极限星等 ' +
+      w.limit.toFixed(1) + '）。裸眼、暗适应≥' + window.M1.DARK_MIN + ' 分钟、只数窗口内、±' +
+      window.M1.TOL + ' 颗算吻合；计数时刻须在预测前后 ' + window.M1.HOUR_TOL +
+      ' 分钟内，且地点、方向、锚星和窗口一致。这里的数字是模型估算，不是对城市灯光净损失的因果测量。'));
   }
 
   /* 卡上的可证伪一句：与核对卡同一 verifyInfo，收图的人照着就能出门打脸 */
   function cardVerifyLine() {
-    if (!verifyInfo) renderVerify();
-    if (!verifyInfo) return '';
-    return '想核对？面向' + azName(verifyInfo.az) + ' ' + Math.round(verifyInfo.az) + '°、仰角 ' +
-      Math.round(verifyInfo.alt) + '°，' + verifyInfo.name + '周围一拳宽（' +
-      (verifyInfo.fist || (G && G.fistWidth ? G.fistWidth() : 10)) + '°）窗口，裸眼预测 ' +
-      verifyInfo.count + ' 颗（±' + window.M1.TOL + ' 颗算吻合）';
+    if (!verifyInfo) return '想核对？请先在「出门核对」中点击「按当前条件换一局并锁定」，明信片不会代你预注册预测。';
+    return '想核对？' + verifyInfo.predictedAt + '，面向' + azName(verifyInfo.az) + ' ' + Math.round(verifyInfo.az) +
+      '°、仰角 ' + Math.round(verifyInfo.alt) + '°，' + verifyInfo.name + '周围一拳宽（' +
+      verifyInfo.windowDiameter + '°）窗口，裸眼模型估算 ' + verifyInfo.count +
+      ' 颗（±' + window.M1.TOL + ' 颗算吻合）';
   }
 
   /* ---------- 今夜找星 ----------
@@ -1352,15 +1379,17 @@
      判定带（±2 颗）与「可比性闸门」都在 core/m1.js，这里只做取值与留痕，不做任何判定。 */
   (function () {
     if (!window.M1) return;
-    var KEY = 'sidera_m1_records', CAP = 200, SCHEMA = 2;
+    var KEY = 'sidera_m1_records', CAP = 200, SCHEMA = 3;
     var elA = $('m1Actual'), elT = $('m1CountAt'), elCH = $('m1CardHours'), elD = $('m1Dark'),
         elMe = $('m1Method'), elW = $('m1Window'), elB = $('m1Block'),
         elC = $('m1Cloud'), elM = $('m1Moon'), elP = $('m1Place'),
         elLat = $('m1Lat'), elLon = $('m1Lon'), elCS = $('m1CoordSrc'), elN = $('m1Nelm'),
+        elAz = $('m1Az'), elAlt = $('m1Alt'), elAnchor = $('m1Anchor'), elRadius = $('m1WindowRadius'),
         elV = $('m1Verdict'), elH = $('m1History'), elNow = $('m1Now'),
         elRec = $('m1Record'), elExp = $('m1Export');
     if (!elA || !elT || !elCH || !elD || !elMe || !elW || !elB || !elC || !elM ||
-        !elP || !elLat || !elLon || !elCS || !elN || !elV || !elH || !elNow || !elRec || !elExp) return;
+        !elP || !elLat || !elLon || !elCS || !elN || !elAz || !elAlt || !elAnchor || !elRadius ||
+        !elV || !elH || !elNow || !elRec || !elExp) return;
 
     /* 页面上写给用户看的两个协议数字，也从内核取：静态文案里那两份是占位，
        真值以内核为准——否则改了内核忘了改文案，就会出现「站点教 10 分钟、闸门按 20 分钟判」这种自相矛盾。 */
@@ -1375,14 +1404,14 @@
       var btn = $('m1FillPlace'), out = $('m1FillMsg');
       if (!btn || !out) return;
       btn.addEventListener('click', function () {
-        var st = window.GROUND ? GROUND.state() : null;
-        if (!st) { out.textContent = '内核未加载，抄不了'; out.className = 'p-note bad'; return; }
-        elP.value = '站上当前观测点 ' + st.city + '（' + st.lat.toFixed(4) + ', ' + st.lon.toFixed(4) + '）';
-        elLat.value = st.lat.toFixed(4);
-        elLon.value = st.lon.toFixed(4);
-        elCS.value = 'site';
-        out.textContent = '已抄入：' + elP.value + '。坐标来源自动记为「站点预设场地」——'
-          + '它只保证记录与卡面同一地点，不算现场定位；要过复核请在现场用手机 GPS 或地图重新填并改来源。';
+        if (!verifyInfo) { out.textContent = '请先在上方锁定一张预测卡'; out.className = 'p-note bad'; return; }
+        var p = verifyInfo;
+        elP.value = p.place;
+        elLat.value = String(p.lat); elLon.value = String(p.lon);
+        elAz.value = String(p.az); elAlt.value = String(p.alt);
+        elAnchor.value = String(p.anchor); elRadius.value = String(p.windowRadius);
+        elCS.value = '';
+        out.textContent = '已带入锁定预测的地点、方向、锚星和窗口；坐标来源仍须在现场选 GPS 或地图。若现场读数不同，请直接改正，内核会核对是否仍在容差内。';
         out.className = 'p-note good';
       });
     })();
@@ -1399,6 +1428,7 @@
       } catch (e) { return []; }
     }
     function save(arr) {
+      if (unreadableStorage()) return false;
       try { localStorage.setItem(KEY, JSON.stringify(arr)); return true; }
       catch (e) { return false; }
     }
@@ -1408,101 +1438,121 @@
       function p(n) { return (n < 10 ? '0' : '') + n; }
       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
     }
-    /* datetime-local 的墙上钟点写回：与 M1.minutesOfDay 同一套「当地时刻、不做时区换算」口径 */
     function nowIso() {
-      var d = new Date();
+      var d = new Date(Date.now() + 8 * 3600000);
       function p(n) { return (n < 10 ? '0' : '') + n; }
-      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+      return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + 'T' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+    }
+    function unreadableStorage() {
+      try {
+        var raw = localStorage.getItem(KEY);
+        if (!raw) return false;
+        return !Array.isArray(JSON.parse(raw));
+      } catch (e) { return true; }
     }
     function renderHistory() {
-      var arr = load();
+      var arr = load(), parts = window.M1.partitionRecords(arr);
       while (elH.firstChild) elH.removeChild(elH.firstChild);
-      if (!arr.length) return;
       var head = document.createElement('div');
-      head.textContent = '本机已存 ' + arr.length + ' 条核对记录（最近 5 条）：';
+      head.textContent = unreadableStorage()
+        ? '本机记录无法解析：已隔离并停止覆盖，请先备份原始数据。'
+        : '本机 ' + arr.length + ' 条：有效证据 ' + parts.evidence.length + ' · 参考 ' + parts.reference.length +
+          ' · 已隔离 ' + parts.quarantined.length + '（显示最近 5 条）';
       elH.appendChild(head);
-      var labels = { confirm: '吻合', falsify: '推翻', invalid_cond: '条件不足', invalid: '无效' };
+      if (!arr.length) return;
+      var labels = { confirm: '吻合', falsify: '推翻', invalid_cond: '参考·条件不足', invalid: '无效' };
       var last = arr.slice(-5).reverse();
       for (var i = 0; i < last.length; i++) {
-        var r = last[i];
-        var row = document.createElement('div');
+        var r = last[i], row = document.createElement('div'), bad = window.M1.recordProblems(r);
         row.className = 'row';
-        row.textContent = (r.countAt || fmtTs(r.ts)) + ' · ' + (r.city || '—') + ' · 预测 ' + r.predicted +
-          ' / 实测 ' + r.actual + ' · ' + (labels[r.code] || r.code) +
-          (typeof r.diff === 'number' ? '（差 ' + r.diff + '）' : '') +
-          (r.gaps && r.gaps.length ? ' · 待补 ' + r.gaps.length + ' 项' : '');
+        if (bad.length) {
+          row.textContent = '已隔离 · ' + bad[0] + (r && r.recordedAt ? ' · ' + fmtTs(r.recordedAt) : '');
+        } else if (r.schema !== 3) {
+          row.textContent = '历史记录 · ' + (r.countAt || fmtTs(r.ts)) + ' · ' + (r.city || '—') +
+            ' · 旧 schema，不可作为有效证据';
+        } else {
+          row.textContent = (r.observation.countAt || '') + ' · ' + r.prediction.city + ' · 预测 ' +
+            r.prediction.count + ' / 实测 ' + r.actual + ' · ' + (labels[r.verdict.code] || r.verdict.code) +
+            '（差 ' + r.verdict.diff + '）';
+        }
         elH.appendChild(row);
       }
     }
     function setVerdict(v, predicted, actual, audit) {
       elV.className = v.code;
       var line = v.code === 'invalid' ? '' :
-        '预测 ' + predicted + ' 颗 · 实测 ' + actual + ' 颗 · 差 ' + (v.diff > 0 ? '+' : '') + v.diff + '。';
+        '预测 ' + predicted + ' 颗 · 实测 ' + actual + ' 颗 · 差 ' +
+        (v.diff > 0 ? '+' : '') + v.diff + '。';
       elV.textContent = line + v.text +
-        (audit.length ? '｜复核字段待补：' + audit.join('；') + '。（不影响判定，只决定这张记录能不能被第三方复核）' : '');
+        (audit.length ? '｜复核字段待补：' + audit.join('；') + '。（不改变可比性判定）' : '');
       if (window.NAVIGATOR) window.NAVIGATOR.onVerdict(v.code, v.diff);
     }
     function doRecord() {
-      if (!verifyInfo) renderVerify();
       var raw = elA.value.trim();
       var actual = raw === '' ? NaN : Number(raw);
-      var cardHours = Number(elCH.value);
+      if (!verifyInfo) {
+        setVerdict({ code: 'invalid_cond', diff: null, gaps: ['尚未锁定预测'],
+          text: '请先在上方生成并锁定预测，再填写观测。记录时不会临时生成预测。' }, '—', raw || '—', []);
+        return;
+      }
       var cond = {
         cloud: elC.value, moon: elM.value,
         darkMin: elD.value.trim(), method: elMe.value, window: elW.value, block: elB.value,
-        cardHours: elCH.value === '' || !isFinite(cardHours) ? null : cardHours,
-        countAt: txt(elT, 20),
+        countAt: txt(elT, 20), timeZone: window.M1.TIME_ZONE,
         place: txt(elP, 120), lat: elLat.value.trim(), lon: elLon.value.trim(),
-        coordSrc: elCS.value, nelm: elN.value.trim()
+        coordSrc: elCS.value, nelm: elN.value.trim(),
+        az: elAz.value.trim(), alt: elAlt.value.trim(), anchor: elAnchor.value.trim(),
+        windowRadius: elRadius.value.trim()
       };
-      var predicted = verifyInfo ? verifyInfo.count : null;
-      var v = window.M1.verdict(predicted, actual, cond);
-      setVerdict(v, predicted, raw === '' ? '—' : actual, v.code === 'invalid' ? [] : window.M1.auditGaps(cond));
+      var v = window.M1.verdictPrediction(verifyInfo, actual, cond);
+      setVerdict(v, verifyInfo.count, raw === '' ? '—' : actual, v.code === 'invalid' ? [] : window.M1.auditGaps(cond));
       if (v.code === 'invalid') return;
-      var st = G ? G.state() : {};
-      var gap = window.M1.hourGapMin(cond.cardHours, cond.countAt);
       var rec = {
-        schema: SCHEMA, ts: new Date().toISOString(), city: st.city || '',
-        cardHours: cond.cardHours, countAt: cond.countAt, hourGap: isNaN(gap) ? null : gap,
-        darkMin: cond.darkMin, method: cond.method, window: cond.window, block: cond.block,
-        cloud: cond.cloud, moon: cond.moon, place: cond.place,
-        lat: cond.lat, lon: cond.lon, coordSrc: cond.coordSrc, nelm: cond.nelm,
-        bortle: verifyInfo.bortle, anchor: verifyInfo.anchor, name: verifyInfo.name,
-        round: verifyInfo.round || null, rounds: verifyInfo.rounds || null,
-        az: Math.round(verifyInfo.az), alt: Math.round(verifyInfo.alt), limit: verifyInfo.limit,
-        predicted: predicted, actual: actual,
-        code: v.code, diff: v.diff, gaps: v.gaps, audit: window.M1.auditGaps(cond)
+        schema: SCHEMA, recordId: 'rec-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
+        recordedAt: new Date().toISOString(), prediction: window.M1.copyPrediction(verifyInfo),
+        observation: cond, actual: actual, verdict: v
       };
       var arr = load();
       arr.push(rec);
       if (arr.length > CAP) arr = arr.slice(arr.length - CAP);
       var ok = save(arr);
       renderHistory();
-      if (!ok) elV.textContent += '（注意：本机存储不可用，这条未能持久保存，请导出 JSON 备份。）';
+      if (!ok) elV.textContent += '（注意：本机存储不可用或原数据已损坏，这条未写入；原始数据未被覆盖。）';
     }
     function doExport() {
-      var arr = load();
+      var arr = load(), parts = window.M1.partitionRecords(arr), unreadable = unreadableStorage();
       var payload = {
-        exportedAt: new Date().toISOString(),
-        schemaVersion: SCHEMA,
-        protocol: 'M1 可证伪预测核对（无月晴夜 · 裸眼 · 一拳宽＝直径 10°（角半径 5°）窗口内逐颗点数 · 暗适应≥' +
-                  window.M1.DARK_MIN + ' 分钟 · 计数时刻与卡面钟点相差≤' + window.M1.HOUR_TOL + ' 分钟）',
-        tolerance: window.M1.TOL,
+        exportedAt: new Date().toISOString(), schemaVersion: SCHEMA,
+        scope: '模型估算＋可证伪核对；不是城市灯光净损失的因果测量',
+        protocol: 'M1-3：无月晴夜、裸眼逐颗点数、一拳宽直径10°（角半径5°）、暗适应≥' +
+                  window.M1.DARK_MIN + '分钟、预测前后≤' + window.M1.HOUR_TOL + '分钟、同一观测夜与观测点',
+        model: { catalog: window.M1.CATALOG, version: window.M1.MODEL_VERSION,
+                 horizon: window.M1.HORIZON, extinction: window.M1.EXTINCTION,
+                 timeZone: window.M1.TIME_ZONE, nightBoundary: '18:00' },
         gatesRequired: { cloud: 'clear', moon: 'none', darkMin: '≥' + window.M1.DARK_MIN,
-                         method: ['point', 'photo'], window: 'fist', block: 'none',
-                         countAt: '与卡面钟点相差≤' + window.M1.HOUR_TOL + ' 分钟' },
-        auditFields: ['place', 'lat', 'lon', 'coordSrc', 'nelm'],
-        count: arr.length, records: arr
+                         method: ['point'], window: 'fist', block: 'none', coordSrc: ['gps', 'map'],
+                         siteToleranceM: window.M1.SITE_TOL_M, directionToleranceDeg: window.M1.DIR_TOL,
+                         windowRadius: 5 },
+        tolerance: window.M1.TOL,
+        integrity: 'digest 仅用于发现意外改动，不是防恶意篡改的签名；localStorage 不是可信时间源',
+        totalCount: arr.length, evidenceCount: parts.evidence.length,
+        referenceCount: parts.reference.length, quarantinedCount: parts.quarantined.length,
+        records: parts.evidence
       };
+      if (unreadable) {
+        payload.storageUnreadable = true;
+        try { payload.rawStorage = localStorage.getItem(KEY); } catch (e) { /* 导出其余字段 */ }
+      }
       try {
         var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
-        a.href = url; a.download = 'sidera_m1_records.json';
+        a.href = url; a.download = 'sidera_m1_evidence.json';
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
         elV.className = 'confirm';
-        elV.textContent = '已导出 ' + arr.length + ' 条记录到 sidera_m1_records.json，可归档进 05_实测记录。';
+        elV.textContent = '已导出 ' + parts.evidence.length + ' 条有效证据；另有 ' + parts.reference.length +
+          ' 条参考记录、' + parts.quarantined.length + ' 条隔离记录未作为证据导出。';
       } catch (e) {
         elV.className = 'invalid';
         elV.textContent = '导出失败：' + (e && e.message ? e.message : '浏览器不支持文件下载');
@@ -1513,8 +1563,10 @@
     elExp.addEventListener('click', doExport);
     renderHistory();
     GX.m1State = function () {
-      return { records: load(), tolerance: window.M1.TOL, darkMin: window.M1.DARK_MIN,
-               hourTol: window.M1.HOUR_TOL, cardHours: elCH.value };
+      var arr = load();
+      return { records: arr, parts: window.M1.partitionRecords(arr),
+               storageUnreadable: unreadableStorage(), tolerance: window.M1.TOL,
+               darkMin: window.M1.DARK_MIN, hourTol: window.M1.HOUR_TOL, cardHours: elCH.value };
     };
   })();
 
@@ -1525,7 +1577,9 @@
     return { show: HUNT.show, on: HUNT.on, at: HUNT.at, found: HUNT.found,
              targets: HUNT.idx.map(function (o) { return o.i; }) };
   };
-  GX.verifyState = function () { return verifyInfo; };
+  GX.verifyState = function () {
+    return { prediction: verifyInfo ? window.M1.copyPrediction(verifyInfo) : null, dirty: verifyDirty };
+  };
   /* 只读口径导出：给领航员复用同一套中文命名/方位/仰角分档，避免第二套说法 */
   GX.__starZh = starNameOf;
   GX.__azName = azName;

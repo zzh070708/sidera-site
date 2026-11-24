@@ -341,6 +341,12 @@ body.gest-on #locRail{left:252px}
 #gestRead span:nth-child(3){color:var(--ink);margin-top:3px}
 #gestClose{appearance:none;border:1px solid var(--line);background:none;color:var(--gold);
   font-family:var(--serif);font-size:10px;padding:2px 8px;border-radius:20px;cursor:pointer;flex:0 0 auto}
+#gestEmu{appearance:none;width:100%;min-height:44px;margin-top:8px;padding:8px 10px;
+  border:1px solid var(--line);background:rgba(8,11,22,.55);color:var(--dim);
+  font-family:var(--serif);font-size:10.5px;letter-spacing:.06em;text-align:left;
+  cursor:pointer;border-radius:3px;transition:color .2s,border-color .2s,background .2s}
+#gestEmu.on{color:var(--gold);border-color:rgba(216,178,92,.55);background:rgba(216,178,92,.1)}
+#gestEmu:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 #gestDot{position:fixed;left:-9px;top:-9px;width:18px;height:18px;border-radius:50%;display:none;
   border:1px solid var(--gold);box-shadow:0 0 12px rgba(216,178,92,.55),inset 0 0 8px rgba(216,178,92,.25);
   z-index:40;pointer-events:none}
@@ -499,8 +505,8 @@ body.gest-on #locRail{left:252px}
       <button class="btn" id="btnHunt">开始「今夜找星」</button>
       <div class="p-sub">出门核对：自己数星星</div>
       <div class="p-note" id="verifyCard">上面的每个数字都该能被你亲眼推翻。到「光害对照」选好后半夜、无月晴夜，走出门，按卡片给的方位和天区窗口数一遍。</div>
-      <button class="btn ghost" id="btnVerify" data-rearm="1">换一局核对窗口</button>
-      <div class="p-note">数完回来，把实际颗数和当晚条件照协议填进去，站点按 <span id="m1TolNote">±2</span> 颗协议自动判定，记录只存在你本机。带「必填」的任一条缺项或不达标，内核只判「条件不足」——既不算佐证，也不算推翻。记录前别改城市/时刻/光害等级，否则预测会变。导出 JSON 可归档进研究留痕。</div>
+      <button class="btn ghost" id="btnVerify" data-rearm="1">按当前条件换一局并锁定</button>
+      <div class="p-note">卡片生成后即锁定；改城市、时刻或光害不会改写旧预测。数完回来，按协议填写实际颗数、时间、现场地点和真实朝向，记录只存在你本机。任一硬条件不达标，只判「条件不足」——既不算佐证，也不算推翻。导出的有效证据只含 schema 3、摘要有效且可比的记录；旧版或损坏记录保留在本机但隔离。</div>
       <div class="m1form">
         <label for="m1Actual">实测颗数（必填）</label>
         <input id="m1Actual" type="number" min="0" max="999" step="1" inputmode="numeric" placeholder="窗口内逐颗点到的颗数，含锚星" aria-label="实际数到的颗数">
@@ -512,8 +518,7 @@ body.gest-on #locRail{left:252px}
         <label for="m1Method">计数方法（必填）</label>
         <select id="m1Method" aria-label="计数方法">
           <option value="">请选择</option>
-          <option value="point">逐颗点数（一颗一指）</option>
-          <option value="photo">照片回看数</option>
+          <option value="point">裸眼逐颗点数（一颗一指）</option>
           <option value="sweep">扫一眼报约数</option>
         </select>
         <label for="m1Window">天区窗口（必填）</label>
@@ -541,21 +546,29 @@ body.gest-on #locRail{left:252px}
           <option value="none">无月</option>
           <option value="some">有月</option>
         </select>
-        <label for="m1Place">具体地点（复核）</label>
+        <label for="m1Place">具体地点（必填，与卡面一致）</label>
         <input id="m1Place" type="text" maxlength="120" placeholder="省市县区 + 脚下位置，如 北京市朝阳区××小区楼下" aria-label="具体观测地点">
-        <label for="m1Lat">纬度（复核）</label>
+        <label for="m1Lat">纬度（必填）</label>
         <input id="m1Lat" type="number" min="-90" max="90" step="0.0001" inputmode="decimal" placeholder="如 39.9042" aria-label="观测点纬度">
-        <label for="m1Lon">经度（复核）</label>
+        <label for="m1Lon">经度（必填）</label>
         <input id="m1Lon" type="number" min="-180" max="180" step="0.0001" inputmode="decimal" placeholder="如 116.4074" aria-label="观测点经度">
-        <label for="m1CoordSrc">坐标来源（复核）</label>
+        <label for="m1CoordSrc">坐标来源（必填）</label>
         <select id="m1CoordSrc" aria-label="经纬度来源">
           <option value="">请选择</option>
           <option value="gps">手机 GPS 现读</option>
           <option value="map">抄自地图定位点</option>
           <option value="site">站点预设场地（不可用于复核）</option>
         </select>
-        <button class="btn ghost" id="m1FillPlace" type="button">把站上这个观测点抄进记录</button>
+        <button class="btn ghost" id="m1FillPlace" type="button">把锁定预测的地点与方向带入表单</button>
         <div class="p-note" id="m1FillMsg"></div>
+        <label for="m1Az">实际方位角（必填，北 0° 顺时针）</label>
+        <input id="m1Az" type="number" min="0" max="359.9999" step="0.01" inputmode="decimal" placeholder="现场罗盘读数" aria-label="实际方位角">
+        <label for="m1Alt">实际仰角（必填，地平线 0°）</label>
+        <input id="m1Alt" type="number" min="0" max="90" step="0.01" inputmode="decimal" placeholder="现场仰角读数" aria-label="实际仰角">
+        <label for="m1Anchor">实际锚星编号（必填）</label>
+        <input id="m1Anchor" type="number" min="0" step="1" inputmode="numeric" placeholder="卡面锚星的 HYG 编号" aria-label="实际锚星编号">
+        <label for="m1WindowRadius">实际窗口角半径（必填，固定 5°）</label>
+        <input id="m1WindowRadius" type="number" min="5" max="5" step="5" inputmode="decimal" placeholder="一拳宽＝直径10°，半径5°" aria-label="实际窗口角半径">
         <label for="m1Nelm">NELM 自评（复核）</label>
         <input id="m1Nelm" type="number" min="-2" max="8" step="0.1" inputmode="decimal" placeholder="独立自评，别抄 Bortle 反查值" aria-label="肉眼极限星等自评">
       </div>
@@ -696,6 +709,7 @@ body.gest-on #locRail{left:252px}
 <div id="gestHud">
   <video id="gestVideo" muted playsinline autoplay></video>
   <div class="g-row"><span id="gestStatus">…</span><button id="gestClose" aria-label="关闭手势">关</button></div>
+  <button id="gestEmu" type="button" role="switch" aria-checked="false"><span class="g-emu-label">鼠标模拟：关</span></button>
   <div id="gestRead"></div>
   <div class="g-note">画面只在本机内存处理 · 不上传、不录制</div>
 </div>
@@ -755,20 +769,20 @@ body.gest-on #locRail{left:252px}
 <div id="introFade"></div>
 <div id="fatal"></div>
 
-<script src="vendor/three.min.js?v=20261124b"></script>
-<script src="data/stars.js?v=20261124b"></script>
-<script src="core/ground.js?v=20261124b"></script>
-<script src="core/warp.js?v=20261124b"></script>
-<script src="core/gesture.js?v=20261124b"></script>
-<script src="core/engine.js?v=20261124b"></script>
-<script src="core/planets3d.js?v=20261124b"></script>
-<script src="core/bm25.js?v=20261124b"></script>
-<script src="core/vector.js?v=20261124b"></script>
-<script src="core/rrf.js?v=20261124b"></script>
-<script src="core/retrieve.js?v=20261124b"></script>
-<script src="data/corpus.js?v=20261124b"></script>
-<script src="core/m1.js?v=20261124b"></script>
-<script src="app.js?v=20261124b"></script>
-<script src="core/navigator.js?v=20261124b"></script>
+<script src="vendor/three.min.js?v=20261124d"></script>
+<script src="data/stars.js?v=20261124d"></script>
+<script src="core/ground.js?v=20261124d"></script>
+<script src="core/warp.js?v=20261124d"></script>
+<script src="core/gesture.js?v=20261124d"></script>
+<script src="core/engine.js?v=20261124d"></script>
+<script src="core/planets3d.js?v=20261124d"></script>
+<script src="core/bm25.js?v=20261124d"></script>
+<script src="core/vector.js?v=20261124d"></script>
+<script src="core/rrf.js?v=20261124d"></script>
+<script src="core/retrieve.js?v=20261124d"></script>
+<script src="data/corpus.js?v=20261124d"></script>
+<script src="core/m1.js?v=20261124d"></script>
+<script src="app.js?v=20261124d"></script>
+<script src="core/navigator.js?v=20261124d"></script>
 </body>
 </html>

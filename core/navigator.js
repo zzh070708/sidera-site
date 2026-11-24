@@ -1073,17 +1073,38 @@
     };
   }
   function narrate(best) {
-    if (!best || best.kind !== 'star' || !free || !isGround() || sceneBusy()) return;
-    var p = pickInfo(best.i);
-    if (!p) { setState('think', 2); setEmotion('think'); say(zh(best.i) + ' 这会儿在地平线下或画面外——把天空转个方向，或等它升起来。', null, null, 7); return; }
-    beamIdx = best.i; beamT = performance.now(); spotEl = null;
+    if (!best || best.kind !== 'star' || !free || sceneBusy()) return;
+    var ground = isGround(), p;
+    if (ground) {
+      p = pickInfo(best.i);
+    } else {
+      var pos = (window.GX && GX.starPos) ? GX.starPos(best.i) : null;
+      var sp = { x: 0, y: 0 };
+      var info = (window.GX && GX.starInfo) ? GX.starInfo(best.i) : null;
+      var pr = panelRect();
+      if (!pos || !info || !window.screenPos || !window.screenPos(pos[0], pos[1], pos[2], sp)) p = null;
+      else if (sp.x < 28 || sp.x > W - 28 || sp.y < 62 || sp.y > H - 96 ||
+               (pr && sp.x > pr.left - 24 && sp.y > pr.top - 10 && sp.y < pr.bottom + 10)) p = null;
+      else p = { i: best.i, x: sp.x, y: sp.y, mag: info.mag, pc: info.distPc };
+    }
+    if (!p) {
+      setState('think', 2); setEmotion('think');
+      say(zh(best.i) + (ground ? ' 这会儿在地平线下或画面外——把天空转个方向，或等它升起来。' :
+        ' 这会儿在画面外——把宇宙视角转到它所在的方向再指一次。'), null, null, 7);
+      return;
+    }
+    beamIdx = ground ? best.i : -1; beamT = performance.now(); spotEl = null;
     flyTo(p.x + (p.x > W * 0.5 ? -110 : 100), p.y - 62);
     setState('guide', 6); setEmotion('think');
     if (stopIdx === 1) advanceIf(1);
     var ly = (p.pc * 3.26156).toFixed(1);
-    say(zh(best.i) + '：视星等 ' + p.mag.toFixed(2) + '，距离约 ' + ly + ' 光年（HYG v4.0 实测）。此刻方位' +
-      azn(p.az) + ' ' + Math.round(p.az) + '° / 高度 ' + Math.round(p.alt) + '°，' + (p.visible ? '在 Bortle ' + bNow() + ' 下真能看见。' :
-      '在 Bortle ' + bNow() + ' 下已被灯光压住——把光害调暗一档它就回来了。'), '记住它', function () { markIt(best.i); }, 11);
+    if (ground) {
+      say(zh(best.i) + '：视星等 ' + p.mag.toFixed(2) + '，距离约 ' + ly + ' 光年（HYG v4.0 星表值）。此刻方位' +
+        azn(p.az) + ' ' + Math.round(p.az) + '° / 高度 ' + Math.round(p.alt) + '°，' + (p.visible ? '按当前 Bortle ' + bNow() + ' 模型可见。' :
+        '按当前 Bortle ' + bNow() + ' 模型已被灯光压住——把光害调暗一档它就回来了。'), '记住它', function () { markIt(best.i); }, 11);
+    } else {
+      say(zh(best.i) + '：视星等 ' + p.mag.toFixed(2) + '，距离约 ' + ly + ' 光年（HYG v4.0 星表值）。这是宇宙幕里的恒星展示位置，不用来判断你在地面能否看见。', null, null, 10);
+    }
   }
   /* 点空白天区：不编故事，只报「这附近画面里还有几颗此刻可见的星」 */
   var cCv = $('c'), downPt = null;

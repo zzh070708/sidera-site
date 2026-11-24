@@ -13,7 +13,7 @@
   var state = {
     on: false, loading: false, lm: null, stream: null, raf: 0, lastT: 0,
     loadEpoch: 0, loadWatch: 0, loadStage: '', loadAt: 0,
-    lastVideoTime: -1, pinch: false, palm: null,
+    lastVideoTime: -1, pinch: false, palm: null, mouseEmu: false,
     pinchS: 0, pinchMode: 'ground', zoomT: 0,
     slideX: null, slideY: null,
     curMX: null, curMY: null,
@@ -22,7 +22,7 @@
     rearmUI: null, rearmX: 0, rearmY: 0, rearmNoted: false,
     loopTicks: 0, detects: 0, lastDetectAt: 0, maxDetectMs: 0, lastErr: null
   };
-  var video = null, dot = null, ring = null, ringCircle = null, hud = null, statusEl = null;
+  var video = null, dot = null, ring = null, ringCircle = null, hud = null, statusEl = null, emuBtn = null;
   var api = { onStop: null, onStatus: null };
 
   function supported() {
@@ -289,7 +289,7 @@
     if (twoFinger(l)) {
       state.rearmUI = null; state.rearmNoted = false;
       state.splitDrag = false; state.rangeEl = null;
-      scrollFrame(l);
+      if (state.mouseEmu) scrollFrame(l); else state.scrollY = null;
       if (dot) dot.style.display = 'none';
       state.dwellT = 0;
       return;
@@ -311,7 +311,7 @@
       }
       /* 拖动优先于点按：指住滑杆/分界线把手即抓取，移动手就是拖，松开（张掌/换手势）才放下。
          否则手势永远只能 dwell-click，够不到任何拖拽件。 */
-      var rEl = state.rangeEl || rangeAt(sx, sy);
+      var rEl = state.rangeEl || (state.mouseEmu && rangeAt(sx, sy));
       if (rEl) {
         state.rangeEl = rEl; state.splitDrag = false;
         state.dwellT = 0; state.dwellUI = null;
@@ -341,7 +341,13 @@
       /* 先问界面：指尖下方有没有可点控件？有就点控件（手势代鼠标），没有才落回 3D 拾取。
          落点变化（换了一个按钮 / 从按钮移到星体）立刻重新起算，避免「上个目标的进度算到下个头上」。 */
       var uiEl = uiHit(sx, sy);
-      state.hoverUI = uiEl;
+      state.hoverUI = state.mouseEmu ? uiEl : null;
+      if (uiEl && !state.mouseEmu) {
+        state.dwellT = 0; state.dwellUI = null;
+        state.rearmUI = null; state.rearmNoted = false;
+        ringSet(false);
+        return;
+      }
       if (uiEl !== state.dwellUI) { state.dwellUI = uiEl; state.dwellT = 0; }
       /* 「按一次状态就变一次」的控件（HTML 里标了 data-rearm）触发一次后，必须把手抬起来才算下一次。
          为什么不能沿用上面那条 1000ms 冷却：冷却一到期站点还会再认一次「指住按下」，
@@ -422,9 +428,9 @@
               : state.splitDrag
                 ? '指住分界线 · 左右拖动'
                 : twoFinger(l)
-                  ? '双指并拢 · 上下滑滚页'
+                  ? (state.mouseEmu ? '双指并拢 · 上下滑滚页' : '双指滚页未开启 · 可在 HUD 打开鼠标模拟')
                   : pointing(l)
-                    ? (state.hoverUI ? '指住界面按钮 · 保持即按下'
+                    ? (state.mouseEmu && state.hoverUI ? '指住界面按钮 · 保持即按下'
                                      : (m === 'ground' ? '指住 0.9 秒 · 标记头顶的星' : '指住 0.9 秒 · 锁定天体'))
                     : '手在画面里了';
         if (kind !== state.lastKind) { state.lastKind = kind; note(kind); }
@@ -448,6 +454,25 @@
     }
   }
 
+  function syncEmuButton() {
+    if (!emuBtn) return;
+    emuBtn.setAttribute('aria-checked', state.mouseEmu ? 'true' : 'false');
+    emuBtn.classList.toggle('on', state.mouseEmu);
+    var lab = emuBtn.querySelector('.g-emu-label');
+    if (lab) lab.textContent = state.mouseEmu ? '鼠标模拟：开（按钮 / 滚页 / 滑杆）' : '鼠标模拟：关（只做空间与指星）';
+  }
+  function setMouseEmulation(on) {
+    state.mouseEmu = !!on;
+    state.dwellT = 0; state.dwellUI = null; state.hoverUI = null;
+    state.rearmUI = null; state.rearmNoted = false;
+    state.rangeEl = null; state.scrollY = null; state.coolUntil = 0;
+    ringSet(false);
+    syncEmuButton();
+    note(state.mouseEmu ? '鼠标模拟已开启：可点按钮、双指滚页、拖滑杆。' :
+      '鼠标模拟已关闭：只做转视角、变焦、指星和拖分界线。');
+    return state.mouseEmu;
+  }
+
   function build() {
     hud = document.getElementById('gestHud');
     video = document.getElementById('gestVideo');
@@ -455,6 +480,12 @@
     ring = document.getElementById('gestRing');
     ringCircle = ring ? ring.querySelector('circle') : null;
     statusEl = document.getElementById('gestStatus');
+    emuBtn = document.getElementById('gestEmu');
+    if (emuBtn && !emuBtn.__sideraBound) {
+      emuBtn.__sideraBound = true;
+      emuBtn.addEventListener('click', function () { setMouseEmulation(!state.mouseEmu); });
+    }
+    syncEmuButton();
     if (!hud || !video) return false;
     hud.classList.add('on');
     document.body.classList.add('gest-on');
@@ -618,7 +649,7 @@
       state.lastKind = null;
       state.lastVideoTime = -1; state.lastT = 0; state.errs = 0; state.lastErr = null;
       state.loopTicks = 0; state.detects = 0; state.lastDetectAt = 0; state.maxDetectMs = 0;
-      note('掌心朝镜头 · 张掌转视角 · 捏合变焦 · 指住选中 · 指住滑杆/分界线左右拖 · 双指并拢上下滚页');
+      note('掌心朝镜头 · 张掌转视角 · 捏合变焦 · 指住选星并听讲解 · 指住分界线左右拖；点按钮/滚页/拖滑杆请在 HUD 开启「鼠标模拟」');
       if (api.onStop) api.onStop();
       loop();
       return true;
@@ -646,6 +677,8 @@
     stop: function () { stop(true); },
     active: function () { return state.on; },
     loading: function () { return state.loading; },
+    mouseEmulation: function () { return state.mouseEmu; },
+    setMouseEmulation: setMouseEmulation,
     set onStop(fn) { api.onStop = fn; },
     set onStatus(fn) { api.onStatus = fn; }
   };
@@ -694,7 +727,7 @@
     };
     GESTURE.__state = function () {
       return { on: state.on, loading: state.loading, model: !!state.lm, kind: state.lastKind || null,
-               mode: mode(), bortle: (window.GX && window.GX.getBortle) ? window.GX.getBortle() : null,
+               mouseEmu: state.mouseEmu, mode: mode(), bortle: (window.GX && window.GX.getBortle) ? window.GX.getBortle() : null,
                loopTicks: state.loopTicks, detects: state.detects,
                lastDetectAt: state.lastDetectAt, maxDetectMs: state.maxDetectMs,
                errs: state.errs, lastErr: state.lastErr,
@@ -743,7 +776,7 @@
       var before = snap();
       act(lms);
       var after = snap();
-      return { before: before, after: after, palm: !!state.palm, pinch: state.pinch };
+      return { before: before, after: after, palm: !!state.palm, pinch: state.pinch, mouseEmu: state.mouseEmu };
     };
   }
 })();

@@ -12,6 +12,7 @@
 
   var state = {
     on: false, loading: false, lm: null, stream: null, raf: 0, lastT: 0,
+    loadEpoch: 0, loadWatch: 0, loadStage: '', loadAt: 0,
     lastVideoTime: -1, pinch: false, palm: null,
     pinchS: 0, pinchMode: 'ground', zoomT: 0,
     slideX: null, slideY: null,
@@ -484,6 +485,9 @@
   }
 
   function stop(notify, keepHud) {
+    if (state.loading) state.loadEpoch++;
+    if (state.loadWatch) { clearInterval(state.loadWatch); state.loadWatch = 0; }
+    state.loading = false;
     if (state.raf) {
       try {
         if (video && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(state.raf);
@@ -511,40 +515,89 @@
 
   function start() {
     if (state.on) return Promise.resolve(true);
-    if (state.loading) return Promise.resolve(false);
+    if (state.loading) {
+      note('还在' + (state.loadStage || '加载') + '，请稍候；也可点右上角「关」后重新点「手势」。');
+      return Promise.resolve(false);
+    }
     if (!supported()) {
       build();
       var why = location.protocol === 'file:'
         ? '当前是双击打开的 file:// 页面，浏览器禁止它加载手势模型。请关闭本页，双击项目根目录的「启动 星阑归序.bat」，在它自动打开的 http://127.0.0.1:8765 页面上再点「手势」（端口被占用时会顺延到 8766 及之后）。'
         : '这台设备或浏览器不支持摄像头手势，鼠标与触摸照常可用。';
       note(why);
-      /* 这条提示是可执行的操作指引，不自动消失，避免用户没看到就错过 */
       return Promise.reject(new Error(why));
     }
     if (!build()) return Promise.reject(new Error('手势界面未能初始化。'));
+    var epoch = ++state.loadEpoch;
     state.loading = true;
-    note('正在加载手势模型（约 20 MB，只加载一次）…');
+    state.loadAt = Date.now();
+    state.loadStage = '正在下载手势识别器（约 17 MB，首次加载）';
+    note(state.loadStage + '…');
+    state.loadWatch = setInterval(function () {
+      if (epoch !== state.loadEpoch || !state.loading) { clearInterval(state.loadWatch); state.loadWatch = 0; return; }
+      var waited = Math.round((Date.now() - state.loadAt) / 1000);
+      if (waited >= 60) {
+        clearInterval(state.loadWatch); state.loadWatch = 0;
+        state.loadEpoch++;
+        state.loading = false;
+        note('手势模型加载超过 60 秒仍未完成。请重新点「手势」重试；鼠标/触摸照常可用。');
+        stop(false, true);
+        setTimeout(function () { if (hud && !state.on && !state.loading) { hud.classList.remove('on'); if (dot) dot.style.display = 'none'; } }, 12000);
+        return;
+      }
+      if (waited % 5 === 0) note(state.loadStage + '（已等待 ' + waited + ' 秒）…');
+    }, 1000);
     var base = new URL('vendor/mediapipe/', location.href).href;
     return import(base + 'vision_bundle.mjs').then(function (mod) {
+      if (epoch !== state.loadEpoch) throw new Error('加载已取消');
+      state.loadStage = '正在准备识别运行环境';
+      note(state.loadStage + '…');
       return mod.FilesetResolver.forVisionTasks(base + 'wasm').then(function (fileset) {
+        if (epoch !== state.loadEpoch) throw new Error('加载已取消');
+        state.loadStage = '正在读取手势模型';
+        note(state.loadStage + '…');
         var opts = {
           baseOptions: { modelAssetPath: base + 'hand_landmarker.task', delegate: 'GPU' },
           runningMode: 'VIDEO', numHands: 1,
           minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.6
         };
-        return mod.HandLandmarker.createFromOptions(fileset, opts).catch(function () {
+        state.loadStage = '正在启动显卡识别引擎';
+        note(state.loadStage + '…');
+        var gpu = new Promise(function (resolve, reject) {
+          var done = false;
+          var timer = setTimeout(function () {
+            if (done) return;
+            done = true;
+            reject(new Error('GPU_TIMEOUT'));
+          }, 15000);
+          mod.HandLandmarker.createFromOptions(fileset, opts).then(function (lm) {
+            if (done) { try { lm.close(); } catch (e) { /* 已超时的实例只负责关闭 */ } return; }
+            done = true; clearTimeout(timer); resolve(lm);
+          }, function (err) {
+            if (done) return;
+            done = true; clearTimeout(timer); reject(err);
+          });
+        });
+        return gpu.catch(function () {
+          if (epoch !== state.loadEpoch) throw new Error('加载已取消');
           opts.baseOptions.delegate = 'CPU';
+          state.loadStage = '显卡未及时响应，正在改用处理器';
+          note(state.loadStage + '…');
           return mod.HandLandmarker.createFromOptions(fileset, opts);
         });
       });
     }).then(function (lm) {
+      if (epoch !== state.loadEpoch) { try { lm.close(); } catch (e) {} throw new Error('加载已取消'); }
       state.lm = lm;
-      note('模型就绪，正在请求摄像头…');
+      state.loadStage = '模型就绪，正在请求摄像头';
+      note(state.loadStage + '…');
       return navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
       });
     }).then(function (stream) {
+      if (epoch !== state.loadEpoch) { stream.getTracks().forEach(function (t) { t.stop(); }); throw new Error('加载已取消'); }
+      clearInterval(state.loadWatch); state.loadWatch = 0;
       state.stream = stream;
       video.srcObject = stream;
       var p = video.play();
@@ -557,7 +610,7 @@
       loop();
       return true;
     }).catch(function (err) {
-      state.loading = false;
+      if (epoch !== state.loadEpoch) return false;
       var m = (err && (err.name === 'NotAllowedError' ? '摄像头权限被拒绝。手势只是可选功能，鼠标/触摸照常可用。'
         : err.name === 'NotFoundError' ? '没有找到摄像头。'
         : (err.message || '未知错误')));
@@ -570,9 +623,9 @@
   }
 
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden && state.on) stop(true);
+    if (document.hidden && (state.on || state.loading)) stop(true);
   });
-  window.addEventListener('pagehide', function () { if (state.on) stop(false); });
+  window.addEventListener('pagehide', function () { if (state.on || state.loading) stop(false); });
 
   window.GESTURE = {
     supported: supported,

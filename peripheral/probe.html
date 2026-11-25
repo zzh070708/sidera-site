@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<title>星阑归序 · 手机外设</title>
+<link rel="stylesheet" href="probe.css">
+</head>
+<body>
+<header>
+  <div class="brand">星阑归序 · 手机外设</div>
+  <div class="room">房间码 <b id="code">——</b></div>
+</header>
+
+<main>
+  <section id="stage">
+    <div class="big" id="hint">把手机举起来，朝向天空</div>
+    <div class="dial"><div class="needle" id="needle"></div><div class="dot"></div></div>
+    <div class="read" id="read">方位 — / 高度 —</div>
+    <div class="sub" id="sub">本页不做预测，也不数星：方向交给电脑，由同一份内核换算并驱动画面。</div>
+  </section>
+
+  <section id="talk">
+    <div class="label">电脑说</div>
+    <div class="bubble" id="bubble">还没连上电脑</div>
+  </section>
+
+  <section id="ctrl">
+    <button id="btnPose" class="primary" type="button">① 举起手机 · 把方向交给电脑</button>
+    <button id="btnShot" type="button">② 拍一张发给电脑</button>
+    <div class="row">
+      <label class="sw"><input type="checkbox" id="chkStop"> 暂停发送</label>
+      <span class="mini" id="stat">未开始</span>
+    </div>
+    <video id="cam" playsinline muted></video>
+    <div class="thumb" id="thumb"></div>
+  </section>
+
+  <footer id="foot"></footer>
+</main>
+
+<script src="../core/pose.js"></script>
+<script src="probe.js"></script>
+</body>
+</html>

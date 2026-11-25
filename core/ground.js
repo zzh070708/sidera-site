@@ -451,6 +451,12 @@
     if (typeof v !== 'number' || !isFinite(v)) return;
     yawT = v * DEG;
   }
+  /* 绝对仰角（度），与 setYaw 同一口径：两者都取自 whereIs 的 (方位, 高度)，
+     所以「对准某颗星」就是 setYaw(az)+setPitch(alt)，不需要第三条换算。 */
+  function setPitch(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return;
+    pitchT = Math.max(-24, Math.min(84, v)) * DEG;
+  }
 
   function placeMark() {
     if (marked < 0 || !markRing) { if (markRing) markRing.visible = false; if (markLabel) markLabel.style.display = 'none'; return; }
@@ -639,7 +645,7 @@
 
   window.GROUND = {
     build: build, update: update, render: render, resize: resize,
-    setBortle: setBortle, setSite: setSite, setPlace: setPlace, look: look, zoom: zoom, setFov: setFov, setYaw: setYaw,
+    setBortle: setBortle, setSite: setSite, setPlace: setPlace, look: look, zoom: zoom, setFov: setFov, setYaw: setYaw, setPitch: setPitch,
     pick: pickStar, mark: mark, state: state, cities: CITIES, visibleStats: visibleStats,
     whereIs: whereIs, setSplit: setSplit, splitInfo: splitInfo, brightest: brightest,
     windowCount: windowCount, fistWidth: function () { return FIST_W; },

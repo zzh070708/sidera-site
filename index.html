@@ -83,6 +83,17 @@ html,body{width:100%;height:100%;overflow:hidden;background:#030510;color:var(--
 .p-sub{font-size:11px;letter-spacing:.2em;color:var(--dim);margin:18px 0 8px}
 .p-note{color:var(--dim);font-size:12px;line-height:1.9}
 .p-gold{color:var(--gold)}
+/* 手机外设：状态行三态（探测中 / 已连上 / 未连接）与只读读数行。
+   未连接态必须显眼，因为它承担「不伪造读数」的诚实边界。 */
+#compStat.ok{color:var(--gold)}
+#compStat.bad{color:#ff9a4d}
+.c-row{display:flex;gap:10px;align-items:baseline;margin:6px 0;font-size:12px;color:var(--dim)}
+.c-row b{color:var(--ink);font-weight:400;letter-spacing:.02em}
+.c-key{min-width:64px;color:var(--gold);letter-spacing:.12em;font-size:11px}
+#compGuide{border:1px solid var(--line);padding:12px 14px;margin:10px 0;font-size:12px;line-height:1.9;color:var(--dim)}
+#compPhoto{display:none;max-width:100%;border:1px solid var(--line);margin:8px 0}
+.c-sw{display:flex;gap:8px;align-items:center;margin:7px 0;font-size:12px;color:var(--dim);cursor:pointer}
+.c-sw input{accent-color:var(--gold)}
 /* 出门核对卡：局数徽章 + 换局反馈闪。
    闪只改 box-shadow/background，不改盒尺寸——加 padding 会让卡变高、把下面的表单顶跳。 */
 .vround{display:inline-block;margin-right:8px;padding:1px 9px;border:1px solid var(--gold);border-radius:999px;
@@ -463,6 +474,7 @@ body.gest-on #locRail{left:252px}
   <button data-sec="data">数据</button>
   <button data-sec="solar">太阳系</button>
   <button data-sec="act">今晚</button>
+  <button data-sec="gear">手机外设</button>
 </div>
 
 <div id="panel">
@@ -670,6 +682,35 @@ body.gest-on #locRail{left:252px}
       <button class="btn" id="btnCard2">生成双联明信片</button>
     </div>
 
+    <div class="sec" id="sec-gear">
+      <div class="p-note">手机在这里不是「另一个页面」：它把朝向交给电脑，电脑用同一份换算、同一片天空、同一个内核把画面转过去。方向换算全项目只有 <b>core/pose.js</b> 一份，谁都不许再写第二份。</div>
+      <div class="p-sub">连接状态</div>
+      <div class="p-sub" id="compStat">正在探测本机外设服务…</div>
+      <div id="compGuide" style="display:none">
+        你现在是从网上打开这个页面的，它连不到你自己电脑上的外设服务——浏览器不允许一个网页去敲你本机的端口，这是安全限制，不是页面坏了。<br>
+        手机外设属于<b>本机功能</b>：在你自己的电脑上双击项目根目录的 <b>启动手机外设.bat</b>，窗口保持打开，里面会给出两个地址。<br>
+        然后用窗口里的「电脑端」地址打开本页（同一份页面，改由你电脑自己提供），手机连<b>同一个 Wi-Fi</b>，打开窗口里的「手机端」地址即可。<br>
+        没有项目包的人：线上版照常提供天空、预测与可证伪核对，手机外设这一节对你不适用，不影响其余功能。
+      </div>
+      <div class="c-row"><span class="c-key">房间码</span><b id="compRoom">—</b></div>
+      <div class="c-row"><span class="c-key">手机端</span><b id="compPhoneUrl">—</b></div>
+      <div class="c-row"><span class="c-key">手机</span><b id="compDevice">—</b></div>
+      <div class="p-sub">手机朝向</div>
+      <div class="c-row"><span class="c-key">读数</span><b id="compPose">无读数</b></div>
+      <label class="c-sw"><input type="checkbox" id="compAim" checked>手机朝向驱动画面（关掉后手机只显示，不动天空）</label>
+      <label class="c-sw"><input type="checkbox" id="compShake">摇一摇换光害一档（会改动预测输入，默认关）</label>
+      <div class="p-sub">手机照片</div>
+      <img id="compPhoto" alt="手机刚拍的一张">
+      <div class="p-note" id="compPhotoNote">还没收到照片。照片只作体验层显示，不进入 Bortle、预测卡或判定。</div>
+      <div class="p-sub">双向</div>
+      <button class="btn" id="compShootBtn" type="button">让手机拍一张</button>
+      <button class="btn ghost" id="compCardBtn" type="button">把这张预测卡发给手机</button>
+      <button class="btn ghost" id="compStopBtn" type="button">断开外设</button>
+      <div class="c-row"><span class="c-key">事件</span><b id="compEvents">—</b></div>
+      <div class="p-sub">这条链路的边界</div>
+      <div class="p-note">手机能给的只有：朝向、时间、地点、一张照片。它给不了 Bortle、NELM 或天顶天空亮度——普通环境光传感器测的是局部照度，换算不出这些量，所以本站不拿它改预测。可证伪的星数预测仍然只由内核算出、由你的裸眼计数来确认或推翻。</div>
+    </div>
+
   </div>
 </div>
 
@@ -769,20 +810,22 @@ body.gest-on #locRail{left:252px}
 <div id="introFade"></div>
 <div id="fatal"></div>
 
-<script src="vendor/three.min.js?v=20261124d"></script>
-<script src="data/stars.js?v=20261124d"></script>
-<script src="core/ground.js?v=20261124d"></script>
-<script src="core/warp.js?v=20261124d"></script>
-<script src="core/gesture.js?v=20261124d"></script>
-<script src="core/engine.js?v=20261124d"></script>
-<script src="core/planets3d.js?v=20261124d"></script>
-<script src="core/bm25.js?v=20261124d"></script>
-<script src="core/vector.js?v=20261124d"></script>
-<script src="core/rrf.js?v=20261124d"></script>
-<script src="core/retrieve.js?v=20261124d"></script>
-<script src="data/corpus.js?v=20261124d"></script>
-<script src="core/m1.js?v=20261124d"></script>
-<script src="app.js?v=20261124d"></script>
-<script src="core/navigator.js?v=20261124d"></script>
+<script src="vendor/three.min.js?v=20261125c"></script>
+<script src="data/stars.js?v=20261125c"></script>
+<script src="core/ground.js?v=20261125c"></script>
+<script src="core/pose.js?v=20261125c"></script>
+<script src="core/warp.js?v=20261125c"></script>
+<script src="core/gesture.js?v=20261125c"></script>
+<script src="core/engine.js?v=20261125c"></script>
+<script src="core/planets3d.js?v=20261125c"></script>
+<script src="core/bm25.js?v=20261125c"></script>
+<script src="core/vector.js?v=20261125c"></script>
+<script src="core/rrf.js?v=20261125c"></script>
+<script src="core/retrieve.js?v=20261125c"></script>
+<script src="data/corpus.js?v=20261125c"></script>
+<script src="core/m1.js?v=20261125c"></script>
+<script src="app.js?v=20261125c"></script>
+<script src="core/navigator.js?v=20261125c"></script>
+<script src="core/companion.js?v=20261125c"></script>
 </body>
 </html>

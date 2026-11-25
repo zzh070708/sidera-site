@@ -8,7 +8,7 @@
  * ==========================================================================*/
 (function () {
   'use strict';
-  window.__SIDERA_VER__ = '20261124d';
+  window.__SIDERA_VER__ = '20261125c';
   var $ = function (id) { return document.getElementById(id); };
   if (!window.GX) {
     var f = $('fatal'); f.style.display = 'block';
@@ -69,7 +69,7 @@
   ];
 
   /* ---------- 面板 / 导航 ---------- */
-  var SEC_TITLES = { light: '此刻头顶', poem: '意象归天', ask: '星问', data: '数据', solar: '太阳系', act: '今晚 · 意识到，然后行动' };
+  var SEC_TITLES = { light: '此刻头顶', poem: '意象归天', ask: '星问', data: '数据', solar: '太阳系', act: '今晚 · 意识到，然后行动', gear: '手机外设 · 同一内核的第二只手' };
   var curSec = 'light', panelOpen = false;
   /* 面板开合时主体移入安全区：补间而不是瞬移，收放才有连贯感 */
   var pan = { x: 0, y: 0, sx: 0, sy: 0, tx: 0, ty: 0, t0: 0, dur: 460, raf: 0 };

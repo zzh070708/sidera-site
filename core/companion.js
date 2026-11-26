@@ -25,6 +25,9 @@
     mode: 'unknown',            // unknown | live | offline
     room: '',
     phoneUrl: '',
+    lan: false,                 // 服务端是否对局域网开放（决定这张码手机扫不扫得开）
+    qrShown: null,              // 已经画进 img 的那条地址，避免每秒重取图
+    qrErr: false,
     phones: 0,
     hello: null,
     pose: null,                 // {az, alt, alpha, beta, gamma, at}
@@ -47,7 +50,7 @@
   function bind() {
     ['compStat', 'compRoom', 'compPhoneUrl', 'compPose', 'compPhoto', 'compPhotoNote',
      'compAim', 'compShake', 'compShoot', 'compCard', 'compStop', 'compGuide',
-     'compDevice', 'compEvents'].forEach(function (k) { els[k] = $(k); });
+     'compDevice', 'compEvents', 'compQrBox', 'compQr', 'compQrNote'].forEach(function (k) { els[k] = $(k); });
   }
 
   function txt(id, s) { if (els[id]) els[id].textContent = s; }
@@ -60,7 +63,11 @@
         if (h && h.ok && h.companion === 'sidera-peripheral-1') {
           st.mode = 'live';
           st.room = (new URLSearchParams(location.search).get('r') || h.room || '').replace(/[^A-Za-z0-9]/g, '');
-          st.phoneUrl = location.origin + '/peripheral/probe.html?r=' + st.room;
+          /* 手机端地址只认服务端算出来的那一条。自己拿 location.origin 拼过一次会出事：
+             本页从 127.0.0.1 打开（电脑端就该走回环，免掉证书警告），
+             拼出来的地址手机根本连不上，而屏幕上看着像真的。 */
+          st.phoneUrl = h.shortUrl || (location.origin + '/peripheral/probe.html?r=' + st.room);
+          st.lan = !!h.lan;
           st.phones = h.phones || 0;
         } else {
           st.mode = 'offline';
@@ -176,6 +183,43 @@
     return s < 60 ? s + ' 秒前' : Math.round(s / 60) + ' 分钟前';
   }
 
+  /* ---------- ④b 二维码就画在这一页里 ----------
+     用户只要三步：双击启动 → 打开这一页 → 手机相机对着屏幕扫。中间不许再多一环
+     （不必去别的页面找码、不必抄地址、不必输房间码）。
+     三条「宁可不画」：没连上、服务只监听本机（画出来手机必打不开的死码）、地址还没算出来。
+     码本身由中继现画（/qr.svg?target=phone，只认服务端自己算出的入口，不接受外部文本），
+     页面既不拼地址也不带内容，免得出现「屏幕上是一张、扫进去是另一张」。 */
+  function paintQr() {
+    // 三个节点少任何一个都只是这一格不出，绝不能把整块面板的渲染搞挂。
+    if (!els.compQrBox || !els.compQr || !els.compQrNote) return;
+    if (st.mode !== 'live') {
+      els.compQrBox.style.display = 'none';
+      els.compQr.style.display = 'none';
+      els.compQr.removeAttribute('src');
+      st.qrShown = null;
+      return;
+    }
+    els.compQrBox.style.display = 'block';
+    if (!st.lan || !st.phoneUrl) {
+      els.compQr.style.display = 'none';
+      els.compQr.removeAttribute('src');
+      st.qrShown = null;
+      els.compQrNote.textContent = st.lan
+        ? '服务在跑，但还没算出对手机开放的地址（多半是刚启动的那一瞬），稍等一下这里自己会变成码。'
+        : '现在画不出码：这个服务只监听本机（没加 --lan），这种码手机扫了必然打不开，所以不画。' +
+          '请双击项目根目录的「启动手机外设.bat」（它带 --https --lan），回到这一页这里就是码。';
+      return;
+    }
+    els.compQrNote.textContent = '手机连和电脑「同一个 Wi-Fi」，直接用相机对着下面这个码扫——' +
+      '扫完就进，不用抄地址、不用输房间码。第一次会弹一句「连接不是私人连接」，点一次「继续访问」，以后不再问。';
+    if (st.qrShown !== st.phoneUrl) {
+      st.qrShown = st.phoneUrl;
+      st.qrErr = false;
+      els.compQr.src = '/qr.svg?target=phone';
+    }
+    els.compQr.style.display = 'block';
+  }
+
   function render() {
     if (!els.compStat) return;
     if (st.mode === 'live') {
@@ -220,6 +264,7 @@
     }
     if (els.compAim) els.compAim.checked = st.aim;
     if (els.compShake) els.compShake.checked = st.shakeBortle;
+    paintQr();
   }
 
   /* ---------- ⑤ 对外 API ---------- */
@@ -236,6 +281,7 @@
       st.running = false;
       st.mode = 'offline';
       st.pose = null; st.photo = null; st.hello = null; st.since = 0; st.joined = false;
+      st.lan = false; st.qrShown = null;
       render();
     },
     setAim: function (on) { st.aim = !!on; render(); return st.aim; },
@@ -245,6 +291,7 @@
     state: function () {
       return {
         mode: st.mode, room: st.room, phoneUrl: st.phoneUrl, phones: st.phones,
+        lan: st.lan, qrShown: st.qrShown, qrErr: st.qrErr,
         pose: st.pose, poseCount: st.poseCount, photoCount: st.photoCount,
         photoAt: st.photo ? st.photo.at : null, aim: st.aim, shakeBortle: st.shakeBortle,
         hello: st.hello, events: st.events.slice(), errs: st.errs, lastErr: st.lastErr,
@@ -263,6 +310,15 @@
   if ($('compShootBtn')) $('compShootBtn').addEventListener('click', function () { COMPANION.askShoot(); });
   if ($('compCardBtn')) $('compCardBtn').addEventListener('click', function () { COMPANION.sendCard(); });
   if ($('compStopBtn')) $('compStopBtn').addEventListener('click', function () { COMPANION.stop(); });
+  /* 码画不出来（二维码组件缺失、端点回 503）时这一格改口说实话，
+     不许留一个破图框让用户怀疑是自己操作错了。 */
+  if (els.compQr) els.compQr.addEventListener('error', function () {
+    st.qrErr = true;
+    els.compQr.style.display = 'none';
+    if (els.compQrNote) els.compQrNote.textContent =
+      '服务在跑，但这张码没能画出来（这台电脑上的二维码组件不可用，服务本体不受影响）。' +
+      '要现在连手机就手打这一条：' + (st.phoneUrl || '—');
+  });
 
   window.COMPANION = COMPANION;
 

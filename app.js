@@ -8,7 +8,7 @@
  * ==========================================================================*/
 (function () {
   'use strict';
-  window.__SIDERA_VER__ = '20261125c';
+  window.__SIDERA_VER__ = '20261125e';
   var $ = function (id) { return document.getElementById(id); };
   if (!window.GX) {
     var f = $('fatal'); f.style.display = 'block';

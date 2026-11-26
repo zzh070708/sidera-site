@@ -91,6 +91,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#030510;color:var(--
 .c-row b{color:var(--ink);font-weight:400;letter-spacing:.02em}
 .c-key{min-width:64px;color:var(--gold);letter-spacing:.12em;font-size:11px}
 #compGuide{border:1px solid var(--line);padding:12px 14px;margin:10px 0;font-size:12px;line-height:1.9;color:var(--dim)}
+/* 二维码直接画在这一页里（用户不必再去别的页面找码）。
+   白底与尺寸是硬要求：透明底缩成邮票，手机相机对着屏幕根本扫不上。 */
+#compQr{display:none;width:190px;height:190px;padding:10px;background:#fff;border:1px solid var(--line);margin:8px 0}
+#compQrNote{font-size:12px;line-height:1.9;color:var(--dim);max-width:440px}
 #compPhoto{display:none;max-width:100%;border:1px solid var(--line);margin:8px 0}
 .c-sw{display:flex;gap:8px;align-items:center;margin:7px 0;font-size:12px;color:var(--dim);cursor:pointer}
 .c-sw input{accent-color:var(--gold)}
@@ -688,11 +692,16 @@ body.gest-on #locRail{left:252px}
       <div class="p-sub" id="compStat">正在探测本机外设服务…</div>
       <div id="compGuide" style="display:none">
         你现在是从网上打开这个页面的，它连不到你自己电脑上的外设服务——浏览器不允许一个网页去敲你本机的端口，这是安全限制，不是页面坏了。<br>
-        手机外设属于<b>本机功能</b>：在你自己的电脑上双击项目根目录的 <b>启动手机外设.bat</b>，窗口保持打开，里面会给出两个地址。<br>
-        然后用窗口里的「电脑端」地址打开本页（同一份页面，改由你电脑自己提供），手机连<b>同一个 Wi-Fi</b>，打开窗口里的「手机端」地址即可。<br>
+        手机外设属于<b>本机功能</b>：在你自己的电脑上双击项目根目录的 <b>启动手机外设.bat</b>，窗口保持打开，它会自动把这一页打开。<br>
+        这一页的「手机外设」里<b>直接就长着那张二维码</b>：手机连<b>和电脑同一个 Wi-Fi</b>，用<b>相机</b>对着它扫即可，全程不用抄地址、不用打字、不用输房间码，也不必再去别的页面找码；第一次会弹一句「连接不是私人连接」，点一次「继续访问」，以后不再问。<br>
         没有项目包的人：线上版照常提供天空、预测与可证伪核对，手机外设这一节对你不适用，不影响其余功能。
       </div>
       <div class="c-row"><span class="c-key">房间码</span><b id="compRoom">—</b></div>
+      <div id="compQrBox" style="display:none">
+        <div class="p-sub">扫码把手机接上 —— 码就在这页里</div>
+        <img id="compQr" alt="手机端入口二维码">
+        <div id="compQrNote">正在探测本机外设服务…</div>
+      </div>
       <div class="c-row"><span class="c-key">手机端</span><b id="compPhoneUrl">—</b></div>
       <div class="c-row"><span class="c-key">手机</span><b id="compDevice">—</b></div>
       <div class="p-sub">手机朝向</div>
@@ -810,22 +819,22 @@ body.gest-on #locRail{left:252px}
 <div id="introFade"></div>
 <div id="fatal"></div>
 
-<script src="vendor/three.min.js?v=20261125c"></script>
-<script src="data/stars.js?v=20261125c"></script>
-<script src="core/ground.js?v=20261125c"></script>
-<script src="core/pose.js?v=20261125c"></script>
-<script src="core/warp.js?v=20261125c"></script>
-<script src="core/gesture.js?v=20261125c"></script>
-<script src="core/engine.js?v=20261125c"></script>
-<script src="core/planets3d.js?v=20261125c"></script>
-<script src="core/bm25.js?v=20261125c"></script>
-<script src="core/vector.js?v=20261125c"></script>
-<script src="core/rrf.js?v=20261125c"></script>
-<script src="core/retrieve.js?v=20261125c"></script>
-<script src="data/corpus.js?v=20261125c"></script>
-<script src="core/m1.js?v=20261125c"></script>
-<script src="app.js?v=20261125c"></script>
-<script src="core/navigator.js?v=20261125c"></script>
-<script src="core/companion.js?v=20261125c"></script>
+<script src="vendor/three.min.js?v=20261125e"></script>
+<script src="data/stars.js?v=20261125e"></script>
+<script src="core/ground.js?v=20261125e"></script>
+<script src="core/pose.js?v=20261125e"></script>
+<script src="core/warp.js?v=20261125e"></script>
+<script src="core/gesture.js?v=20261125e"></script>
+<script src="core/engine.js?v=20261125e"></script>
+<script src="core/planets3d.js?v=20261125e"></script>
+<script src="core/bm25.js?v=20261125e"></script>
+<script src="core/vector.js?v=20261125e"></script>
+<script src="core/rrf.js?v=20261125e"></script>
+<script src="core/retrieve.js?v=20261125e"></script>
+<script src="data/corpus.js?v=20261125e"></script>
+<script src="core/m1.js?v=20261125e"></script>
+<script src="app.js?v=20261125e"></script>
+<script src="core/navigator.js?v=20261125e"></script>
+<script src="core/companion.js?v=20261125e"></script>
 </body>
 </html>

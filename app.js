@@ -8,7 +8,7 @@
  * ==========================================================================*/
 (function () {
   'use strict';
-  window.__SIDERA_VER__ = '20261125e';
+  window.__SIDERA_VER__ = '20261127i';
   var $ = function (id) { return document.getElementById(id); };
   if (!window.GX) {
     var f = $('fatal'); f.style.display = 'block';
@@ -144,8 +144,7 @@
   }
   function openSec(sec) {
     if (HUNT.show) huntStop();
-    /* 离开「意象归天」时把诗单复位：否则下次进来还停在上一首诗，列表永远是隐藏的 */
-    if (sec !== 'poem' && curPoem) poemBack();
+    /* 离开诗词区只隐藏面板，不收起当前诗：刷新后仍可依据 poemId/poemState 恢复。 */
     curSec = sec;
     hideFirstHint();
     var secs = document.querySelectorAll('.sec');
@@ -158,6 +157,7 @@
     if (sec === 'data') drawViz();
     if (sec === 'light') { updateLightUI(); renderStarList(); renderVerify(); }
     if (sec === 'act') updateActUI();
+    if (sec === 'poem' && curPoem) GX.highlight({ stars: curPoem.stars, pairs: curPoem.pairs, names: curPoem.names });
     if (sec !== 'poem') GX.clearHighlight();
     syncWarpFab();
   }
@@ -192,19 +192,316 @@
     });
   });
 
-  /* ---------- 地点 / 时刻（离线城市表 + 任意经纬度，零权限） ---------- */
+  /* ---------- 共享体验状态（EX 不可用时保留原有主页功能） ---------- */
   var G = window.GROUND || null;
+  var EX = window.SIDERA_EXPERIENCE || null;
+  var HOME_DEFAULT_CITY = '北京', HOME_DEFAULT_HOUR = 22, HOME_DEFAULT_BORTLE = 8;
+  var homeActTag = 'daily', homeSyncEnabled = false, homeResetting = false;
+  var homeContextTimer = 0, homeInitialBortle = HOME_DEFAULT_BORTLE, recentExpanded = false;
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function roundQuarter(v) { return Math.round(v * 4) / 4; }
+  function isPrivateMode() { return !!(EX && EX.isPrivate && EX.isPrivate()); }
+  function homeNotify(message, duration) {
+    if (EX && EX.notify) { EX.notify(message, duration); return; }
+    if (GX.softMsg) {
+      GX.softMsg(message);
+      setTimeout(function () { if (GX.clearSoftMsg) GX.clearSoftMsg(); }, duration || 4500);
+    }
+  }
+  function findCity(name) {
+    if (!G || !name) return null;
+    for (var i = 0; i < G.cities.length; i++) if (G.cities[i].name === name) return G.cities[i];
+    return null;
+  }
+  function findCityByNameOrKey(value) {
+    var c = findCity(value);
+    if (c) return c;
+    if (value === 'beijing') return findCity('北京');
+    if (value === 'jinzhou') return findCity('锦州');
+    return null;
+  }
+  function readHomePrefs() {
+    try { return EX && EX.get ? EX.get('home') : null; } catch (e) { return null; }
+  }
+  function restoreHomePrefs() {
+    if (!G) return;
+    var p = readHomePrefs();
+    var c = findCity(p && p.city) || findCity(HOME_DEFAULT_CITY) || G.cities[0];
+    var h = p && isFinite(Number(p.hour)) ? clamp(Number(p.hour), 18, 29.5) : HOME_DEFAULT_HOUR;
+    G.setSite(c, h);
+    homeInitialBortle = p && isFinite(Number(p.bortle)) ? clamp(Math.round(Number(p.bortle)), 1, 9) : HOME_DEFAULT_BORTLE;
+    homeActTag = p && p.actTag === 'observe' ? 'observe' : 'daily';
+  }
+  function homeCityInfo() {
+    if (!G) return { key: '', name: HOME_DEFAULT_CITY, preset: false };
+    var st = G.state(), c = findCity(st.city);
+    return {
+      key: c && c.name === '北京' ? 'beijing' : (c && c.name === '锦州' ? 'jinzhou' : ''),
+      name: c ? c.name : (st.city || '自定义观测点'), preset: !!c
+    };
+  }
+  function currentHomeContext() {
+    var st = G ? G.state() : { hours: HOME_DEFAULT_HOUR }, info = homeCityInfo();
+    return { source: 'home', cityKey: info.key, cityName: info.name, hour: st.hours };
+  }
+  function persistHomeContext() {
+    if (!EX || !EX.patch || !G) return;
+    var st = G.state(), info = homeCityInfo();
+    EX.patch('home', {
+      city: info.preset ? info.name : '', hour: st.hours,
+      bortle: GX.getBortle(), actTag: homeActTag
+    });
+  }
+  function flushHomeSync() {
+    if (homeContextTimer) { clearTimeout(homeContextTimer); homeContextTimer = 0; }
+    if (!homeSyncEnabled || homeResetting || isPrivateMode() || !G) return;
+    persistHomeContext();
+    if (EX && EX.sendContext) EX.sendContext(currentHomeContext());
+  }
+  function scheduleHomeSync() {
+    if (!homeSyncEnabled || homeResetting || isPrivateMode()) return;
+    if (homeContextTimer) clearTimeout(homeContextTimer);
+    homeContextTimer = setTimeout(flushHomeSync, 500);
+  }
+  if (EX && EX.subscribe) EX.subscribe(function () {
+    if (isPrivateMode() && homeContextTimer) { clearTimeout(homeContextTimer); homeContextTimer = 0; }
+  });
+  if (EX && EX.onContext) EX.onContext(function (message) {
+    if (!message) return;
+    if (message.type === 'context') {
+      var context = message.context;
+      if (!G || !context || context.source !== 'city' || isPrivateMode()) return;
+      if (!isFinite(Number(context.at)) || Number(context.at) < Date.now() - 7 * 86400000) return;
+      var c = findCityByNameOrKey(context.cityKey);
+      if (!c || !isFinite(Number(context.hour))) return;
+      var h = clamp(Number(context.hour), 18, 29.5);
+      G.setSite(c, h);
+      if ($('citySel')) $('citySel').value = c.name;
+      if ($('hourRange')) $('hourRange').value = String(h);
+      if ($('hourVal')) $('hourVal').textContent = '今夜 ' + fmtHour(h);
+      updateLightUI(); updateActUI(); queueStarList(); renderVerify(); updateCityWalkLink();
+      persistHomeContext();
+      return;
+    }
+    if (message.type !== 'clear') return;
+    if (message.kind === 'recent') { recentExpanded = false; renderHomeRecent(); return; }
+    if (message.kind === 'all') clearKeyState();
+    clearPoemView();
+    resetHomeContrast(false, false);
+    renderHomeRecent(); renderPoemHistory();
+  });
+  function updateActTabs() {
+    var observe = homeActTag === 'observe';
+    var a = $('actObserve'), b = $('actDaily');
+    if (a) { a.classList.toggle('on', observe); a.setAttribute('aria-selected', observe ? 'true' : 'false'); }
+    if (b) { b.classList.toggle('on', !observe); b.setAttribute('aria-selected', observe ? 'false' : 'true'); }
+  }
+  function normalizeCityWalkHour(hour) {
+    var value = Number(hour);
+    if (!isFinite(value)) value = HOME_DEFAULT_HOUR;
+    return clamp(roundQuarter(value), 19, 28);
+  }
+  function buildCityWalkURL(hour) {
+    var link = $('cityWalkLink');
+    var href = link.getAttribute('href') || 'city-walk.html?v=20261127g';
+    var url = new URL(href, location.href);
+    var allowed = ['city', 'h', 'epoch', 'track', 't', 'v'];
+    /* 先收集再删除：边遍历边删会让相邻的无关参数被跳过。允许的参数也只保留第一份，避免重复。 */
+    var cleaned = new URLSearchParams();
+    allowed.forEach(function (key) {
+      var first = url.searchParams.get(key);
+      if (first !== null) cleaned.append(key, first);
+    });
+    url.search = cleaned.toString();
+    var info = homeCityInfo();
+    url.searchParams.set('city', info.key);
+    url.searchParams.set('h', String(normalizeCityWalkHour(hour)));
+    var route = Number(url.searchParams.get('t'));
+    if (!isFinite(route) || route < 0 || route > 1) route = 0;
+    url.searchParams.set('t', String(route));
+    return url;
+  }
+  function updateCityWalkLink() {
+    var link = $('cityWalkLink');
+    if (!link || !G) return;
+    var info = homeCityInfo();
+    if (info.key) {
+      link.href = buildCityWalkURL(G.state().hours).href;
+      link.removeAttribute('aria-disabled');
+      link.removeAttribute('role');
+      link.removeAttribute('tabindex');
+    } else {
+      /* 不支持的城市不留可导航回退地址；仍保留按钮语义以便点击或键盘唤出说明。 */
+      link.removeAttribute('href');
+      link.setAttribute('aria-disabled', 'true');
+      link.setAttribute('role', 'button');
+      link.tabIndex = 0;
+    }
+  }
+  function openCityWalk(e) {
+    if (e) e.preventDefault();
+    if (!G) return;
+    var info = homeCityInfo();
+    if (!info.key) {
+      homeNotify('漫游页暂无该城市模型；主页仍可使用自定义观测点。');
+      return;
+    }
+    var raw = Number(G.state().hours);
+    var normalized = normalizeCityWalkHour(raw);
+    if (!isFinite(raw) || raw < 19 || raw > 28) {
+      homeNotify('漫游页仅支持 19:00–28:00，已调整为 ' + fmtHour(normalized) + '。');
+    }
+    var url = buildCityWalkURL(normalized);
+    if (url.href !== location.href) location.href = url.href;
+  }
+  function resetHomeContrast(sendReset, persist) {
+    if (!G) return;
+    homeResetting = true;
+    if (homeContextTimer) { clearTimeout(homeContextTimer); homeContextTimer = 0; }
+    bortleTween = null;
+    if (typeof huntStop === 'function') huntStop();
+    if (typeof splitOn !== 'undefined' && splitOn && typeof setSplit === 'function') setSplit(false);
+    var c = findCity(HOME_DEFAULT_CITY) || G.cities[0];
+    G.setSite(c, HOME_DEFAULT_HOUR);
+    GX.setBortle(HOME_DEFAULT_BORTLE);
+    homeInitialBortle = HOME_DEFAULT_BORTLE;
+    homeActTag = 'daily';
+    if ($('citySel')) $('citySel').value = c.name;
+    if ($('hourRange')) $('hourRange').value = String(HOME_DEFAULT_HOUR);
+    if ($('hourVal')) $('hourVal').textContent = '今夜 ' + fmtHour(HOME_DEFAULT_HOUR);
+    updateActTabs();
+    updateLightUI(); updateActUI(); queueStarList(); renderVerify(); updateCityWalkLink();
+    if (EX) {
+      if (persist !== false && EX.patch) EX.patch('home', {
+        city: c.name, hour: HOME_DEFAULT_HOUR, bortle: HOME_DEFAULT_BORTLE, actTag: 'daily'
+      });
+      if (sendReset !== false && EX.sendReset) EX.sendReset();
+    }
+    homeResetting = false;
+  }
+  function clearKeyState() {
+    keyOptOut = true;
+    keyFromPrivate = false;
+    if ($('keyInput')) $('keyInput').value = '';
+    if ($('keyForget')) $('keyForget').textContent = '已清除';
+  }
+  function recentCity(item) {
+    return findCityByNameOrKey(item && item.city) || findCity(item && item.cityName);
+  }
+  function restoreRecentContext(item) {
+    if (!G || !item) return;
+    if (item.track !== 'real') {
+      homeNotify('历史轨道不能伪装成主页真实时段；请到城市漫游页查看。');
+      return;
+    }
+    var c = recentCity(item);
+    if (!c) { homeNotify('该对照的主页城市不可用，未切换当前对照。'); return; }
+    var h = isFinite(Number(item.hour)) ? clamp(Number(item.hour), 18, 29.5) : HOME_DEFAULT_HOUR;
+    G.setSite(c, h);
+    if ($('citySel')) $('citySel').value = c.name;
+    if ($('hourRange')) $('hourRange').value = String(h);
+    if ($('hourVal')) $('hourVal').textContent = '今夜 ' + fmtHour(h);
+    updateLightUI(); updateActUI(); queueStarList(); renderVerify(); updateCityWalkLink();
+    if (EX && EX.addRecent) EX.addRecent(item);
+    persistHomeContext();
+    if (EX && EX.sendContext) EX.sendContext(currentHomeContext());
+    renderHomeRecent();
+    homeNotify('已载入真实时段对照：' + c.name + ' ' + fmtHour(h) + '。');
+  }
+  function renderHomeRecent() {
+    var box = $('homeRecentList'), all = $('btnRecentAll');
+    if (!box) return;
+    var list = EX && EX.recent ? EX.recent() : [];
+    var shown = recentExpanded ? list.slice(0, 3) : list.slice(0, 1);
+    while (box.firstChild) box.removeChild(box.firstChild);
+    if (!shown.length) {
+      var empty = document.createElement('div'); empty.className = 'p-note';
+      empty.textContent = '暂无最近对照。'; box.appendChild(empty);
+    }
+    shown.forEach(function (item) {
+      var c = recentCity(item);
+      var row = document.createElement('div'); row.className = 'recent-item';
+      var label = document.createElement('div');
+      label.textContent = (c ? c.name : (item.cityName || item.city || '未知城市')) + ' ' +
+        fmtHour(Number(item.hour) || HOME_DEFAULT_HOUR) +
+        (item.track === 'history' ? ' · 历史轨道' : ' · 真实时段');
+      row.appendChild(label);
+      if (item.track === 'real') {
+        var load = document.createElement('button'); load.type = 'button'; load.textContent = '载入对照';
+        load.addEventListener('click', function () { restoreRecentContext(item); });
+        row.appendChild(load);
+      } else {
+        var note = document.createElement('small'); note.textContent = '不载入主页'; row.appendChild(note);
+      }
+      box.appendChild(row);
+    });
+    if (all) {
+      all.hidden = list.length <= 1;
+      all.textContent = recentExpanded ? '收起' : '查看全部（最多3条）';
+    }
+  }
+  (function bindHomeFlow() {
+    var cityWalk = $('cityWalkLink');
+    if (cityWalk) {
+      cityWalk.addEventListener('click', openCityWalk);
+      cityWalk.addEventListener('keydown', function (e) {
+        if (!cityWalk.hasAttribute('href') && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault(); cityWalk.click();
+        }
+      });
+    }
+    var reset = $('btnResetHome'), resetPanel = $('btnResetHomePanel');
+    if (reset) reset.addEventListener('click', function () { resetHomeContrast(true, true); });
+    if (resetPanel) resetPanel.addEventListener('click', function () { resetHomeContrast(true, true); });
+    var data = $('btnDataHome');
+    if (data) data.addEventListener('click', function () {
+      if (!EX || !EX.dataDialog) { homeNotify('共享状态模块未加载，本机数据功能暂不可用。'); return; }
+      EX.dataDialog({ onReset: function (kind) {
+        if (kind === 'all') clearKeyState();
+        if (kind === 'recent') recentExpanded = false;
+        if (kind !== 'recent') {
+          clearPoemView();
+          resetHomeContrast(false, false);
+        }
+        renderHomeRecent(); renderPoemHistory();
+      } });
+    });
+    var observe = $('actObserve'), daily = $('actDaily');
+    if (observe) observe.addEventListener('click', function () { setHomeActTag('observe'); });
+    if (daily) daily.addEventListener('click', function () { setHomeActTag('daily'); });
+    var recent = $('btnRecentHome'), panel = $('homeRecent');
+    if (recent && panel) recent.addEventListener('click', function () {
+      panel.hidden = !panel.hidden;
+      recent.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+      if (!panel.hidden) renderHomeRecent();
+    });
+    var close = $('btnRecentClose');
+    if (close) close.addEventListener('click', function () {
+      if (panel) panel.hidden = true;
+      if (recent) recent.setAttribute('aria-expanded', 'false');
+    });
+    var all = $('btnRecentAll');
+    if (all) all.addEventListener('click', function () {
+      recentExpanded = !recentExpanded;
+      renderHomeRecent();
+    });
+  })();
+
+  /* ---------- 地点 / 时刻（离线城市表 + 任意经纬度，零权限） ---------- */
   (function () {
     var sel = $('citySel');
     if (!G) { sel.style.display = 'none'; $('hourRange').style.display = 'none'; return; }
+    restoreHomePrefs();
     G.cities.forEach(function (c) {
       var o = document.createElement('option');
       o.textContent = c.name; o.value = c.name;
       sel.appendChild(o);
     });
+    sel.value = G.state().city;
     var gh = G.state().hours;
     $('hourRange').value = String(gh);
     $('hourVal').textContent = '今夜 ' + fmtHour(gh);
+    updateActTabs(); updateCityWalkLink();
 
     /* 预设城市之外的人（老家院子、学校楼顶）自己填经纬度。
        坐标校验与半球识别在 core/m1.js 的纯函数 parsePlace 里，有单测；这里只管换站与显示。 */
@@ -214,6 +511,8 @@
       updateLightUI();
       updateActUI();
       queueStarList();                                // 其中含 200ms debounce 的 renderVerify()
+      updateCityWalkLink();
+      scheduleHomeSync();
       var st = G.state();
       if (tag) tag.textContent = places[st.city] ? '当前：自定义点 ' + st.city : '';
     }
@@ -298,18 +597,22 @@
     if (!lost.length) {
       /* 锚星本身都是全天最亮的那些，市中心也还看得见——真正被吞掉的是暗星与银河。
          绝不能因为「锚星没丢」就说「天空没事」，那是把话说漂亮而不是说实话。 */
-      el.textContent = '诗句里的锚星都是全天最亮的星，灯再亮也吞不掉它们；但此刻头顶另有 ' +
-        lostN.toLocaleString() + ' 颗原本肉眼可见的星已经消失' +
-        (band.limit <= 5.6 ? '，银河也被城市灯光洗白——诗句里的「河汉」再也看不见了。' : '，银河尚在。');
+      el.textContent = '诗句里的锚星都是全天最亮的星，在当前模型口径下仍达到可见阈值；但按当前模型口径，头顶另有 ' +
+        lostN.toLocaleString() + ' 颗原本肉眼可见的星已低于可见阈值' +
+        (band.limit <= 5.6 ? '，银河结构也低于当前模型可见阈值——诗句里的「河汉」在此口径下不可见。' : '，银河结构仍在可见范围内。');
     } else {
-      el.textContent = '此刻已被吞没：' + lost.join('；') + '。它们不是熄灭了，是被城市的灯光盖住了。';
+      el.textContent = '按当前模型口径已低于可见阈值：' + lost.join('；') + '。它们不是熄灭了，而是不再计入此刻的可见恒星。';
     }
     var fh = $('firstHint');
     if (fh && fh.classList.contains('show')) setHintText(b, vis);
     if (splitOn) splitLabels();
     gestRead();
   }
-  GX.onBortle = function () { updateLightUI(); updateActUI(); updateTopbar(); queueStarList(); if (HUNT.show && HUNT.on) huntReBortle(); };
+  GX.onBortle = function () {
+    updateLightUI(); updateActUI(); updateTopbar(); queueStarList();
+    scheduleHomeSync(); scheduleActionUpdate();
+    if (HUNT.show && HUNT.on) huntReBortle();
+  };
   $('bortle').addEventListener('input', function () { bortleTween = null; GX.setBortle(+this.value); });
 
   /* ---------- 手势读数 ----------
@@ -374,7 +677,7 @@
     splitTag.querySelector('.r').textContent = '此刻 · Bortle ' + info.bortle + ' · ' + info.nowVisible.toLocaleString() + ' 颗';
     var gone = Math.max(0, Math.round(100 * (1 - info.nowVisible / Math.max(1, info.darkVisible))));
     $('splitStat').textContent = '左手边 ' + info.darkVisible.toLocaleString() + ' 颗，右手边 ' +
-      info.nowVisible.toLocaleString() + ' 颗 —— 同一天空，' + gone + '% 的星被灯光盖掉了。';
+      info.nowVisible.toLocaleString() + ' 颗 —— 同一天空，按当前模型口径有 ' + gone + '% 的可见恒星低于阈值。';
   }
   function setSplit(on) {
     if (!G) return;
@@ -395,8 +698,8 @@
      卡上若还写着旧读数，同一块屏幕上就同时出现两套真相。 */
   function setHintText(b, vis) {
     $('fhTitle').textContent = 'Bortle ' + b + ' · ' + BORTLE_NAMES[b - 1];
-    $('fhText').textContent = '此刻头顶只剩 ' + vis.toLocaleString() + ' 颗肉眼可见的星。' +
-      '不一定是今晚运气差——是城市的灯把其余的都盖住了。';
+    $('fhText').textContent = '此刻头顶有 ' + vis.toLocaleString() + ' 颗恒星达到当前模型可见阈值。' +
+      '其余恒星并未消失，只是低于这片天空的可见阈值。';
   }
   function showFirstHint() {
     /* 只在地面幕讲「头顶的光害」；片头收尾的延时回调可能在观众已进宇宙幕后才到点，
@@ -438,10 +741,71 @@
   /* ---------- 今晚：意识到 → 行动 ----------
      主线是「你今晚的天空」：先用真实星数把个人损失摆出来，再讲三层伤害（标证据强度），
      最后把行动按真实量级分成 个人→集体→政策 三档——个人是参与，不是解决。 */
+  var homeActionTimer = 0, homeActionSignature = '';
+  function homeDaylight() {
+    if (!G) return false;
+    var st = G.state();
+    var d = new Date(st.predictedAt);
+    if (isNaN(d.getTime())) return st.hours < 19 || st.hours > 28;
+    var year = d.getUTCFullYear();
+    var doy = Math.floor((d.getTime() - Date.UTC(year, 0, 0)) / 86400000);
+    var decl = 23.44 * Math.sin(2 * Math.PI * (284 + doy) / 365) * Math.PI / 180;
+    var lat = Number(st.lat) * Math.PI / 180;
+    var ha = (Number(st.hours) - 12) * 15 * Math.PI / 180;
+    var alt = Math.asin(Math.sin(lat) * Math.sin(decl) + Math.cos(lat) * Math.cos(decl) * Math.cos(ha));
+    return alt > -0.833 * Math.PI / 180;
+  }
+  function homeActionKey() {
+    if (!G) return '';
+    var b = GX.getBortle();
+    var band = b <= 3 ? 'dark' : (b <= 6 ? 'mid' : 'bright');
+    return [G.state().city, band, homeDaylight() ? 'day' : 'night', homeActTag].join('|');
+  }
+  function scheduleActionUpdate() {
+    if (homeActionTimer) clearTimeout(homeActionTimer);
+    homeActionTimer = setTimeout(renderActionList, 500);
+  }
+  function setHomeActTag(tag) {
+    tag = tag === 'observe' ? 'observe' : 'daily';
+    if (homeActTag === tag) return;
+    homeActTag = tag;
+    updateActTabs();
+    if (EX && EX.patch) EX.patch('home', { actTag: tag });
+    scheduleHomeSync();
+    scheduleActionUpdate();
+  }
+  function renderActionList() {
+    homeActionTimer = 0;
+    var box = $('actList');
+    if (!box) return;
+    var key = homeActionKey();
+    if (key === homeActionSignature) return;
+    homeActionSignature = key;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    if (EX && EX.actionsFor) {
+      var items = EX.actionsFor(GX.getBortle(), 'real', homeDaylight(), homeActTag).items;
+      items.forEach(function (text, index) {
+        var div = document.createElement('div'); div.className = 'act-item';
+        var t = document.createElement('div'); t.className = 't';
+        t.textContent = (index + 1) + '. ' + text;
+        div.appendChild(t); box.appendChild(div);
+      });
+      return;
+    }
+    /* 共享模块缺失时保留原有行动卡结构与内容，不阻断主页。 */
+    ACTS.forEach(function (a) {
+      var div = document.createElement('div'); div.className = 'act-item';
+      var t = document.createElement('div'); t.className = 't'; t.textContent = a.t;
+      var tier = document.createElement('span'); tier.className = 'tier'; tier.textContent = a.tier;
+      t.appendChild(tier);
+      var d = document.createElement('div'); d.className = 'd'; d.textContent = a.d;
+      div.appendChild(t); div.appendChild(d); box.appendChild(div);
+    });
+  }
   function updateActUI() {
     var lead = $('actNow');
     if (!G) {
-      if (lead) lead.textContent = '选择一座城市、一个时刻，本站会按真实星表算出：你头顶本来该有多少颗星，此刻又被灯光盖掉了多少。';
+      if (lead) lead.textContent = '选择一座城市、一个时刻，本站会按真实星表算出：你头顶本来该有多少颗星，此刻又有多少颗低于当前模型可见阈值。';
       $('actIf').textContent = '';
       return;
     }
@@ -459,13 +823,14 @@
       var b2 = document.createElement('b'); b2.textContent = now.toLocaleString(); lead.appendChild(b2);
       lead.appendChild(document.createTextNode(' 颗——'));
       var b3 = document.createElement('b'); b3.textContent = lost.toLocaleString(); lead.appendChild(b3);
-      lead.appendChild(document.createTextNode(' 颗被城市的灯光盖掉了' + (mwGone ? '，连银河也被洗白。' : '。')));
+      lead.appendChild(document.createTextNode(' 颗按当前模型口径低于可见阈值' + (mwGone ? '，银河结构也低于当前模型可见阈值。' : '。')));
     }
     var rural = G.visibleStats(6.1).visible;               // Bortle 4 的极限星等 6.1
     $('actIf').textContent = '如果' + gs.city + '今夜是 Bortle 4（乡村天空），同一时刻头顶可见 ' +
       rural.toLocaleString() + ' 颗星，而此刻只有 ' + now.toLocaleString() + ' 颗——多出来的 ' +
-      (rural - now).toLocaleString() + ' 颗，就是灯光替你关掉的那部分宇宙。' +
+      Math.max(0, rural - now).toLocaleString() + ' 颗，就是当前模型估计的灯光可见性损失。' +
       '（这是按真实星表与当前时刻做的推演，不是对现实的承诺：一盏灯改不了整座城的天空。）';
+    scheduleActionUpdate();
   }
   /* 行动按真实量级分档：个人能做的是「参与」，集体与政策才是真正减光污染的杠杆。
      不夸大个人作用，也不把观众晾在无力感里——给出从近到远、可逐级放大的路径。 */
@@ -475,18 +840,7 @@
     { tier: '集体 · 放大', t: '让一个社区先暗下来', d: '推动小区物业、商铺关掉朝天的射灯和彻夜亮着的招牌，把「暗夜友好」变成业主公约。一个社区的改变，比一户人家大得多，也最能带动周边。' },
     { tier: '政策 · 根本', t: '支持照明法规与暗夜保护', d: '真正能减光污染的是法律与照明规划。这根杠杆刚刚变硬：2026 年 8 月 15 日施行的《生态环境法典》专设「光污染防治」一章，首次在国家法律层面系统规制光污染；2022 年新修改的《上海市环境保护条例》则最早把光污染写入地方性法规并设罚则。关注你所在城市的执法与照明规划修订，支持暗夜保护地——个人行动汇入法律，天空才真的回得来。' }
   ];
-  (function () {
-    var box = $('actList');
-    ACTS.forEach(function (a) {
-      var div = document.createElement('div'); div.className = 'act-item';
-      var t = document.createElement('div'); t.className = 't'; t.textContent = a.t;
-      var tier = document.createElement('span'); tier.className = 'tier'; tier.textContent = a.tier;
-      t.appendChild(tier);
-      var d = document.createElement('div'); d.className = 'd'; d.textContent = a.d;
-      div.appendChild(t); div.appendChild(d);
-      box.appendChild(div);
-    });
-  })();
+  renderActionList();
 
   /* 双联明信片：直接用分屏那一帧，左右两半同源同刻，不是拼图。
      buildCard 只管排版出画（探针可单独调用取证），makeCard 只管下载。 */
@@ -580,8 +934,81 @@
     div.addEventListener('click', function () { activatePoem(p); });
     listEl.appendChild(div);
   });
-  function activatePoem(p) {
+  function findPoemById(id) {
+    for (var i = 0; i < poems.length; i++) if (poems[i].id === id) return poems[i];
+    return null;
+  }
+  function poemContext() {
+    var st = G ? G.state() : { hours: HOME_DEFAULT_HOUR };
+    return { city: st.city || HOME_DEFAULT_CITY, track: 'real', hour: st.hours };
+  }
+  function recordCurrentPoem(open) {
+    if (!curPoem || !EX || !EX.recordPoem) return;
+    EX.recordPoem(curPoem.id, poemContext(), open);
+    renderPoemHistory();
+  }
+  function restorePoemContext(item) {
+    if (!G || !item) return;
+    if (item.track !== 'real') {
+      homeNotify('历史轨道不能作为主页真实时段恢复；请到城市漫游页查看。');
+      return;
+    }
+    var c = findCityByNameOrKey(item.city) || findCity(item.cityName);
+    if (!c) { homeNotify('该诗词记录的主页城市不可用，未切换当前对照。'); return; }
+    var h = isFinite(Number(item.hour)) ? clamp(Number(item.hour), 18, 29.5) : HOME_DEFAULT_HOUR;
+    G.setSite(c, h);
+    if ($('citySel')) $('citySel').value = c.name;
+    if ($('hourRange')) $('hourRange').value = String(h);
+    if ($('hourVal')) $('hourVal').textContent = '今夜 ' + fmtHour(h);
+    updateLightUI(); updateActUI(); queueStarList(); renderVerify(); updateCityWalkLink();
+    scheduleHomeSync();
+    homeNotify('已恢复诗词浏览时的城市与真实时段；未切换诗词，也未恢复历史年代。');
+  }
+  function renderPoemHistory() {
+    var wrap = $('poemHistory'), box = $('poemHistoryList');
+    if (!wrap || !box) return;
+    var list = EX && EX.poemHistory ? EX.poemHistory() : [];
+    while (box.firstChild) box.removeChild(box.firstChild);
+    wrap.hidden = !list.length;
+    list.forEach(function (item) {
+      var p = findPoemById(item.id), c = recentCity(item);
+      var row = document.createElement('div'); row.className = 'poem-history-item';
+      var label = document.createElement('div');
+      label.textContent = (p ? p.title : item.id) + ' · ' +
+        (item.track === 'history' ? '历史轨道' : (c ? c.name : (item.city || '主页')) + ' ' + fmtHour(Number(item.hour) || HOME_DEFAULT_HOUR));
+      row.appendChild(label);
+      if (item.track === 'real') {
+        var restore = document.createElement('button'); restore.type = 'button';
+        restore.textContent = '恢复当时对照';
+        restore.addEventListener('click', function () { restorePoemContext(item); });
+        row.appendChild(restore);
+      } else {
+        var note = document.createElement('span'); note.textContent = '仅城市页查看'; row.appendChild(note);
+      }
+      box.appendChild(row);
+    });
+  }
+  function clearPoemView() {
+    curPoem = null;
+    if ($('poemView')) $('poemView').style.display = 'none';
+    var items = listEl.querySelectorAll('.poem-item');
+    for (var i = 0; i < items.length; i++) { items[i].style.display = 'block'; items[i].classList.remove('on'); }
+    GX.clearHighlight();
+  }
+  function restorePoemDisplay() {
+    var p = readHomePrefs();
+    if (!p || !p.poemId) return;
+    var hasState = p.poemState && typeof p.poemState === 'object' &&
+      Object.prototype.hasOwnProperty.call(p.poemState, p.poemId);
+    var state = hasState ? p.poemState[p.poemId] : p.poemOpen;
+    if (!state) return;
+    var poem = findPoemById(p.poemId);
+    if (poem) { activatePoem(poem, true); openSec('poem'); }
+  }
+  renderPoemHistory();
+  function activatePoem(p, restoring) {
     curPoem = p;
+    if (!restoring) recordCurrentPoem(true);
     toSpace();   // 诗锚在赤道坐标里，飞不过去就只能在地面视角里干等
     var items = listEl.querySelectorAll('.poem-item');
     for (var i = 0; i < items.length; i++) items[i].style.display = 'none';
@@ -623,6 +1050,8 @@
     GX.highlight({ stars: p.stars, pairs: p.pairs, names: p.names });
   }
   function poemBack() {
+    if (curPoem && EX && EX.setPoemOpen) EX.setPoemOpen(curPoem.id, false);
+    else recordCurrentPoem(false);
     curPoem = null;
     $('poemView').style.display = 'none';
     var items = listEl.querySelectorAll('.poem-item');
@@ -730,26 +1159,43 @@
   }
   /* Key 生命周期：输入框是唯一事实来源。清空输入＝本机立即删除 Key（旧实现清空后
      仍回读 localStorage 里的旧 Key，用户以为已离线，实际还在外发——已修）。 */
-  var keyOptOut = false;
+  var keyOptOut = false, keyPrivacyNoticed = false, keyFromPrivate = false;
+  function notifyKeyPrivate() {
+    if (keyPrivacyNoticed) return;
+    keyPrivacyNoticed = true;
+    homeNotify('隐私模式：Key 仅用于当前页面，不会写入或改动本机存储。');
+  }
   function getKey() {
     try {
       if (keyOptOut) return '';
       var inp = $('keyInput').value.trim();
-      if (inp) { localStorage.setItem('gx_ds_key', inp); return inp; }
+      if (inp) {
+        if (isPrivateMode()) { keyFromPrivate = true; notifyKeyPrivate(); }
+        else if (!keyFromPrivate) localStorage.setItem('gx_ds_key', inp);
+        return inp;
+      }
+      if (isPrivateMode()) return '';
       return localStorage.getItem('gx_ds_key') || '';
     } catch (e) { return ''; }
   }
   $('keyInput').addEventListener('input', function () {
     if (!this.value.trim()) {
-      keyOptOut = true;
-      try { localStorage.removeItem('gx_ds_key'); } catch (e) {}
-    } else { keyOptOut = false; }
+      keyOptOut = true; keyFromPrivate = false;
+      if (isPrivateMode()) notifyKeyPrivate();
+      else { try { localStorage.removeItem('gx_ds_key'); } catch (e) {} }
+    } else {
+      keyOptOut = false;
+      keyFromPrivate = isPrivateMode();
+      if (isPrivateMode()) notifyKeyPrivate();
+    }
   });
   var keyForget = $('keyForget');
   if (keyForget) keyForget.addEventListener('click', function () {
-    $('keyInput').value = ''; keyOptOut = true;
-    try { localStorage.removeItem('gx_ds_key'); } catch (e) {}
-    keyForget.textContent = '已清除';
+    $('keyInput').value = ''; keyOptOut = true; keyFromPrivate = false;
+    var privateMode = isPrivateMode();
+    if (privateMode) notifyKeyPrivate();
+    else { try { localStorage.removeItem('gx_ds_key'); } catch (e) {} }
+    keyForget.textContent = privateMode ? '本次已停用' : '已清除';
     setTimeout(function () { keyForget.textContent = '清除 Key'; }, 1800);
   });
   function extend(q, context, key) {
@@ -786,7 +1232,9 @@
   }
   $('askBtn').addEventListener('click', function () { var q = $('askInput').value.trim(); if (q) answer(q); });
   $('askInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') { var q = this.value.trim(); if (q) answer(q); } });
-  try { var saved = localStorage.getItem('gx_ds_key'); if (saved) $('keyInput').value = saved; } catch (e) {}
+  if (!isPrivateMode()) {
+    try { var saved = localStorage.getItem('gx_ds_key'); if (saved) $('keyInput').value = saved; } catch (e) {}
+  }
 
   /* ---------- 数据可视化：Bortle × 可见星数（真实星表实时统计） ---------- */
   function drawViz() {
@@ -1344,7 +1792,7 @@
     var dark = G.visibleStats(7.6).visible;
     $('huntProg').textContent = '完成';
     $('huntTarget').textContent = '今夜，你亲手找回了 ' + HUNT.idx.length + ' 颗星。';
-    $('huntHint').textContent = '同一片天，本来有 ' + dark.toLocaleString() + ' 颗肉眼可见——其余的，被城市的灯盖住了。';
+    $('huntHint').textContent = '同一片天，本来有 ' + dark.toLocaleString() + ' 颗肉眼可见——其余恒星按当前模型口径低于可见阈值。';
     $('huntDark').style.display = '';
     $('huntAgain').style.display = '';
     $('huntExit').textContent = '结束';
@@ -1379,7 +1827,7 @@
      判定带（±2 颗）与「可比性闸门」都在 core/m1.js，这里只做取值与留痕，不做任何判定。 */
   (function () {
     if (!window.M1) return;
-    var KEY = 'sidera_m1_records', CAP = 200, SCHEMA = 3;
+    var KEY = 'sidera_m1_records', CAP = 200, SCHEMA = 3, pendingRecords = [];
     var elA = $('m1Actual'), elT = $('m1CountAt'), elCH = $('m1CardHours'), elD = $('m1Dark'),
         elMe = $('m1Method'), elW = $('m1Window'), elB = $('m1Block'),
         elC = $('m1Cloud'), elM = $('m1Moon'), elP = $('m1Place'),
@@ -1427,7 +1875,12 @@
         return Array.isArray(arr) ? arr : [];
       } catch (e) { return []; }
     }
+    function availableRecords() { return load().concat(pendingRecords); }
     function save(arr) {
+      if (isPrivateMode()) {
+        homeNotify('隐私模式：本次观测未写入本机；判定结果仍保留在当前页面。');
+        return false;
+      }
       if (unreadableStorage()) return false;
       try { localStorage.setItem(KEY, JSON.stringify(arr)); return true; }
       catch (e) { return false; }
@@ -1451,7 +1904,7 @@
       } catch (e) { return true; }
     }
     function renderHistory() {
-      var arr = load(), parts = window.M1.partitionRecords(arr);
+      var arr = availableRecords(), parts = window.M1.partitionRecords(arr);
       while (elH.firstChild) elH.removeChild(elH.firstChild);
       var head = document.createElement('div');
       head.textContent = unreadableStorage()
@@ -1516,11 +1969,14 @@
       arr.push(rec);
       if (arr.length > CAP) arr = arr.slice(arr.length - CAP);
       var ok = save(arr);
+      if (!ok) pendingRecords.push(rec);
       renderHistory();
-      if (!ok) elV.textContent += '（注意：本机存储不可用或原数据已损坏，这条未写入；原始数据未被覆盖。）';
+      if (!ok) elV.textContent += isPrivateMode()
+        ? '（本次判定未写入本机，已进入待导出记录；关闭隐私不会自动保存。）'
+        : '（注意：本次观测未写入本机，已进入待导出记录；原始数据未被覆盖。）';
     }
     function doExport() {
-      var arr = load(), parts = window.M1.partitionRecords(arr), unreadable = unreadableStorage();
+      var arr = availableRecords(), parts = window.M1.partitionRecords(arr), unreadable = unreadableStorage();
       var payload = {
         exportedAt: new Date().toISOString(), schemaVersion: SCHEMA,
         scope: '模型估算＋可证伪核对；不是城市灯光净损失的因果测量',
@@ -1563,8 +2019,10 @@
     elExp.addEventListener('click', doExport);
     renderHistory();
     GX.m1State = function () {
-      var arr = load();
+      var arr = load(), available = availableRecords();
       return { records: arr, parts: window.M1.partitionRecords(arr),
+               available: available, availableParts: window.M1.partitionRecords(available),
+               pendingCount: pendingRecords.length,
                storageUnreadable: unreadableStorage(), tolerance: window.M1.TOL,
                darkMin: window.M1.DARK_MIN, hourTol: window.M1.HOUR_TOL, cardHours: elCH.value };
     };
@@ -1682,9 +2140,12 @@
         if (introEl) introEl.style.display = 'none';
         GX.setMode('ground');
         $('modeBtn').textContent = '回到宇宙';
-        GX.setBortle(8);
-        $('bortle').value = '8';
-        updateLightUI();
+        GX.setBortle(homeInitialBortle);
+        $('bortle').value = String(homeInitialBortle);
+        homeSyncEnabled = true;
+        updateLightUI(); updateActUI(); updateCityWalkLink();
+        flushHomeSync();
+        setTimeout(restorePoemDisplay, 0);
         syncWarpFab();
         $('topbar').style.opacity = '1';
         $('nav').style.opacity = '1';

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests">
+<title>星阑归序 · 向暗处走</title>
+<meta name="description" content="在同一座城市里比较亮灯与熄灯，锁定真实星表的一拳宽预测，再回传同点位裸眼计数。">
+<link rel="stylesheet" href="city-walk.css?v=20261127g">
+<link rel="stylesheet" href="experience.css?v=20261127g">
+</head>
+<body>
+<div id="stage" aria-label="可操控的城市三维场景"></div>
+
+<div id="fallback" hidden>
+  <img id="fallbackImage" src="assets/city-night-painting-v1.png?v=20261127g" alt="夜间城市绘画">
+  <div><strong id="fallbackTitle">当前浏览器未能启动实时 3D</strong><span id="fallbackText">静态预览，数据仍会更新。</span></div>
+</div>
+
+<header class="topbar">
+  <a class="brand" href="index.html?v=20261127g" aria-label="返回星阑归序主站"><strong>向暗处走</strong><span>← 返回星阑归序</span></a>
+  <label class="city-picker"><span>地点</span><select id="city" aria-label="选择城市">
+    <option value="beijing">北京</option>
+    <option value="jinzhou">锦州</option>
+  </select></label>
+  <div class="live"><i></i>实时科学可视化 · 模型非实拍</div>
+</header>
+
+<nav class="flow-bar" aria-label="对照流程">
+  <div class="track-tabs" role="group" aria-label="时间轨道">
+    <button id="trackReal" class="on" aria-pressed="true">真实时段</button>
+    <button id="trackHistory" aria-pressed="false">历史年代</button>
+  </div>
+  <div class="flow-group">
+    <button id="tonight">回到今晚</button>
+    <button id="resetCompare">重置对照</button>
+    <button id="undoCompare" title="撤销仅回退本次会话操作，不会修改已保存的本机偏好">撤销</button>
+  </div>
+  <div class="flow-group">
+    <button id="recentToggle">最近对照</button>
+    <button id="shareCompare">分享</button>
+  </div>
+  <span class="flow-spacer"></span>
+  <label>展示<select id="displayMode" aria-label="展示模式">
+    <option value="immersive">沉浸</option><option value="lite">轻查阅</option><option value="guide">讲解</option>
+  </select></label>
+  <button id="actionToggle">行动建议</button>
+  <button id="cityData">本机数据</button>
+</nav>
+
+<section class="track-panel" aria-label="时间参数">
+  <div class="track-rail" id="realTrackPanel">
+    <div class="rail-cap"><span>19:00</span><strong id="trackHourValue">21:00</strong><span>次日 04:00</span></div>
+    <input id="trackHour" type="range" min="19" max="28" step="0.25" value="21" aria-label="真实时段，从 19 点到次日 4 点">
+  </div>
+  <div class="track-rail" id="historyTrackPanel" hidden>
+    <div class="rail-cap"><span>约 1876 年</span><strong id="historyEpochValue">公元 1500 年</strong><span>约公元前 1975 年</span></div>
+    <input id="historyEpoch" type="range" min="150" max="4000" step="50" value="1500" aria-label="历史年代，数值表示距 2026 年的年数">
+  </div>
+  <p class="track-note" id="trackNote">真实时段用于当前城市机制示意；预测核对使用城市中心坐标。</p>
+  <p class="history-empty" id="historyEmpty" hidden>该城市暂无此年代模型数据。轨道与年代已保留，结果清空。</p>
+</section>
+
+<aside class="flow-card" id="recentCard" hidden aria-label="最近对照">
+  <button class="sx-card-close" data-close-card aria-label="关闭">×</button>
+  <span class="tag">本机记忆 · 最近 7 天</span><h2>最近对照</h2>
+  <div class="recent-list" id="recentList"></div>
+</aside>
+
+<aside class="flow-card" id="actionCard" hidden aria-label="行动建议">
+  <button class="sx-card-close" data-close-card aria-label="关闭">×</button>
+  <span class="tag" id="actionBand">光害分档</span><h2 id="actionTitle">日常行动</h2>
+  <p id="actionNote"></p><ul id="actionList"></ul>
+</aside>
+
+<div class="rail-right">
+<aside class="readout" aria-label="三维场景机制示意读数">
+  <span class="tag">场景机制示意 · 非实测</span>
+  <div class="place"><span id="place">市中心</span><em id="cityName">北京</em></div>
+  <div class="metric"><span>光害等级</span><strong id="bortle">9</strong><small>BORTLE 示意</small></div>
+  <div class="metric"><span>极限星等</span><strong id="nelm">3.5</strong><small>场景模型</small></div>
+  <div class="metric stars"><span>全天空示意</span><strong id="visible">0</strong><small>颗 · 非窗口预测</small></div>
+  <div class="duo">
+    <div class="mini"><span>灯光活动</span><b id="activity">100%</b></div>
+    <div class="mini"><span>可见天空</span><b id="skyFrac">40%</b></div>
+  </div>
+  <div class="cause">亮灯／熄灯保持同机位、同时间，只切换灯光变量。这里的数字解释三维场景，不用于实地核对。</div>
+</aside>
+
+<aside class="epoch-panel" aria-label="等光度假设下的时间天花板">
+  <span class="tag">时间天花板 · 等光度假设</span>
+  <strong id="epoch">公元 1870 年</strong>
+  <span id="epochSub">年代机制示意，不是真实距离</span>
+  <div class="ruler" id="timeRuler" style="--p:0%">
+    <i class="fill"></i><i class="mark"></i>
+    <em style="left:0%">今</em><em style="left:30%">明</em><em style="left:56%">宋</em>
+    <em style="left:66%">唐</em><em style="left:82%">汉</em><em style="left:96%">先秦</em>
+  </div>
+  <p class="blocked">另有 <b id="timeBlocked">0</b> 颗星就在同一片天上，今晚被灯拦在膜下</p>
+  <p class="robot" id="robotLine">外设未连接 · 虚拟机器人可直接注入同一套读数</p>
+</aside>
+</div>
+
+<aside class="rover-panel stage-only" id="roverPanel" hidden aria-label="虚拟机器人对照">
+  <button id="roverClose" aria-label="关闭机器人">×</button>
+  <span class="tag">虚拟机器人 · 只读对照</span>
+  <div class="rover-metrics">
+    <div class="mini"><span>设备读数</span><b id="roverLux">—</b></div>
+    <div class="mini"><span>折算等级</span><b id="roverImplied">—</b></div>
+    <div class="mini eye"><span>肉眼预测</span><b id="roverEye">—</b></div>
+  </div>
+  <div class="rover-bar"><i id="roverBarGlare"></i><i id="roverBarSky"></i></div>
+  <div class="rover-legend">
+    <span>灯直射 <b id="roverGlareShare">—</b></span>
+    <span>天光与本底 <b id="roverSkyShare">—</b></span>
+  </div>
+  <div class="rover-loc"><span>车在</span><strong id="roverPos">—</strong><span id="roverHeadingLabel">0°</span></div>
+  <div class="rover-rails">
+    <div class="rail">
+      <div class="rail-cap"><strong>车的位置</strong></div>
+      <input id="roverRoute" class="rail-input" type="range" min="0" max="1000" value="260" aria-label="机器人沿路线的位置">
+    </div>
+    <div class="rail">
+      <div class="rail-cap"><strong>筒口朝向</strong></div>
+      <input id="roverHeading" class="rail-input" type="range" min="0" max="359" value="0" aria-label="机器人筒口的朝向，0 度对着市中心">
+    </div>
+  </div>
+  <div class="rover-actions">
+    <button id="roverBaffle" aria-pressed="false">筒口敞开</button>
+    <button id="roverWalk" aria-pressed="false">让它自己走</button>
+    <button id="roverJoin" aria-pressed="false">走到车边</button>
+  </div>
+  <p class="rover-trail" id="roverTrail">把车开到路上，看它读到的和眼睛看到的是不是同一件事。</p>
+</aside>
+
+<aside class="science-panel" id="sciencePanel" hidden aria-label="真实星表预测与实地核对">
+  <button id="scienceClose" aria-label="关闭预测核对">×</button>
+  <span class="tag">M1-3 · HYG v4.0 真实星表</span>
+  <h2>先预测，再出门数星</h2>
+  <p class="science-lead">锁定一个直径 10° 的一拳宽窗口。只有晴夜、无月、暗适应≥20 分钟、同点位同方向的裸眼计数，才能与它比较。</p>
+  <div class="science-status" id="scienceStatus">正在载入真实星表…</div>
+  <section class="prediction-card" aria-label="当前预测">
+    <div class="prediction-top"><span id="predictionState">尚未锁定</span><b id="predictionCount">—</b><small>颗</small></div>
+    <strong id="predictionName">—</strong>
+    <p id="predictionWhere">—</p>
+    <p id="predictionWhen">—</p>
+    <p class="prediction-note" id="predictionNote">三维路线只改变场景；真实预测使用当前城市中心坐标。</p>
+    <div class="science-actions">
+      <button id="freezePrediction" class="primary" disabled>锁定当前预测</button>
+      <button id="nextAnchor" disabled>换一颗锚星</button>
+    </div>
+  </section>
+  <details class="observation-form" id="observationDetails">
+    <summary>回传实地裸眼计数</summary>
+    <div class="form-grid">
+      <label>实际数到<input id="obsActual" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label>暗适应分钟<input id="obsDark" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="wide">实际计数时刻（UTC+8）<input id="obsTime" type="datetime-local" step="1"></label>
+      <label class="wide">具体观测点（须与预测一致）<input id="obsPlace" type="text" maxlength="120"></label>
+      <label>纬度<input id="obsLat" type="number" step="any" inputmode="decimal"></label>
+      <label>经度<input id="obsLon" type="number" step="any" inputmode="decimal"></label>
+      <label>实际方位角<input id="obsAz" type="number" min="0" max="359.999" step="0.1" inputmode="decimal"></label>
+      <label>实际仰角<input id="obsAlt" type="number" min="0" max="90" step="0.1" inputmode="decimal"></label>
+      <label>坐标来源<select id="obsSource"><option value="" selected>请选择</option><option value="gps">现场 GPS</option><option value="map">地图定位点</option><option value="other">其他</option></select></label>
+      <label>云量<select id="obsCloud"><option value="" selected>请选择</option><option value="clear">晴</option><option value="cloudy">有云</option></select></label>
+      <label>月亮<select id="obsMoon"><option value="" selected>请选择</option><option value="none">不在天上</option><option value="present">仍在天上</option></select></label>
+      <label>遮挡与直射光<select id="obsBlock"><option value="" selected>请选择</option><option value="none">无</option><option value="blocked">有</option></select></label>
+      <label>肉眼极限星等自评<input id="obsNelm" type="number" min="-2" max="8" step="0.1" inputmode="decimal"></label>
+    </div>
+    <label class="check-line"><input id="obsMethod" type="checkbox">裸眼逐颗点数，没有用望远镜或相机代替眼睛</label>
+    <label class="check-line"><input id="obsWindow" type="checkbox">只数以预测锚星为中心的一拳宽窗口，含锚星</label>
+    <p class="form-hint" id="observationGuide">请先锁定预测，再按现场实际情况填写；系统不会用预测值代替观测值。</p>
+    <p class="form-hint">锚星编号与 5° 窗口半径由锁定快照自动带入，不允许提交时临时替换。预测时刻已过去的候选不给锁定——那会让「核对」变成事后补录。</p>
+    <button id="submitObservation" class="primary" disabled>提交并判定</button>
+  </details>
+  <section class="verdict-card" id="verdictCard" hidden aria-live="polite">
+    <span class="tag" id="verdictTag">判定</span><strong id="verdictTitle">—</strong><p id="verdictText">—</p>
+  </section>
+  <div class="record-line"><span id="recordSummary">有效证据 0 · 参考 0 · 隔离 0</span><button id="exportRecords">导出记录</button></div>
+  <p class="storage-warning" id="storageWarning" hidden></p>
+</aside>
+
+<aside class="star-card" id="starCard" hidden aria-label="指认的示意星">
+  <button id="starClose" aria-label="关闭">×</button>
+  <span class="tag">示意星 · 等光度假设</span>
+  <strong id="starWhen">—</strong>
+  <div class="row"><span id="starMag">—</span></div>
+  <div class="row"><span id="starDist">—</span></div>
+  <p id="starNote">轻点画面里的一颗星。</p>
+</aside>
+
+<div class="look-hint stage-only" id="lookHint">拖动画面转视角 · W A S D 行走 · 轻点星点看它的年代</div>
+
+<footer class="route-panel">
+  <div class="rail-col">
+    <div class="rail stage-only">
+      <div class="rail-cap"><span>市中心</span><strong id="routeTitle">走进城市</strong><span>郊区</span></div>
+      <input id="route" type="range" min="0" max="1000" value="0" aria-label="从市中心到郊区的位置">
+    </div>
+  </div>
+  <div class="side-col">
+    <label class="view-picker stage-only"><span>观测点</span><select id="viewpoint" aria-label="选择观测点">
+      <option value="street">街道</option>
+      <option value="terrace">低层露台</option>
+      <option value="highrise">高层窗前</option>
+      <option value="indoor">室内窗边</option>
+    </select></label>
+    <div class="route-actions">
+      <button id="lightsOut" aria-pressed="false">一键全城熄灯</button>
+      <button id="rover" class="stage-only" aria-pressed="false">虚拟机器人</button>
+      <button id="tour" class="stage-only" aria-pressed="false">自动巡游</button>
+      <button id="scienceToggle" aria-controls="sciencePanel" aria-expanded="false" aria-pressed="false">预测核对</button>
+      <button id="reset" class="stage-only">重置视角</button>
+    </div>
+  </div>
+  <div class="mobile-walk-row">
+    <div class="touch-controls stage-only" aria-label="触屏行走">
+      <button data-move="back" aria-label="后退">←</button>
+      <button data-move="forward" aria-label="前进">→</button>
+    </div>
+    <p><b>口径分层：</b><span class="caliber-full">三维建筑、灯光曲线、全天空星数与「等光度假设」年代均为机制示意，不是实测或实地预测；右侧「预测核对」才使用 HYG v4.0 真实星表、城市中心坐标、地平线与大气消光，生成 M1-3 一拳宽窗口预测。锁定后参数变化不会改写旧快照；晴夜、无月、同点位同方向且预测前后 5 分钟内的裸眼计数才可比较。记录只存于本机浏览器，可导出 JSON。机器人读数只作对照，永不改写预测或判定。</span><span class="caliber-mobile">三维与灯光为机制示意；预测核对使用 HYG v4.0 与 M1-3。记录仅存本机，可导出。</span></p>
+  </div>
+</footer>
+
+<script src="vendor/three.min.js?v=20261127g"></script>
+<script src="data/stars.js?v=20261127g"></script>
+<script src="core/ground.js?v=20261127g"></script>
+<script src="core/m1.js?v=20261127g"></script>
+<script src="core/experience.js?v=20261127g"></script>
+<script src="science.js?v=20261127g"></script>
+<script src="city-walk.js?v=20261127g"></script>
+</body>
+</html>

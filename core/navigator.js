@@ -172,7 +172,7 @@
   window.addEventListener('resize', resize); resize();
 
   /* ---------- 领航员状态 ---------- */
-  var S = { glow: 1, speed: 1, scale: 1.32, hue: '#e8b654' };
+  var S = { glow: 1, speed: 1, scale: 0.76, hue: '#e8b654' };
   var cam = { yaw: 0.5, pitch: 0.18, dist: 9, tyaw: 0.5, tpitch: 0.18 };
   var spirit = { pos: { x: 0, y: 0, z: 0 }, rotY: 0, rotZ: 0, squash: 1, hop: 0, blink: 0, state: 'idle', stateT: 0, emotion: 'happy' };
   var nav = { x: 0, y: 0, tx: 0, ty: 0, vx: 0, vy: 0, size: 1 };
@@ -264,9 +264,9 @@
     var f = footRaw || foot;
     return { left: x - f.l, top: y - f.t, right: x + f.r, bottom: y + f.b };
   }
-  /* 比例站位：中央天空带优先，角落留给栖息（全被压住时的兜底） */
-  var SPOTS = [[0.42, 0.40], [0.50, 0.30], [0.34, 0.58], [0.50, 0.64],
-               [0.62, 0.46], [0.26, 0.30], [0.14, 0.72]];
+  /* 比例站位：右侧天空带优先，主场景与左侧观测注记保持留白 */
+  var SPOTS = [[0.82, 0.34], [0.77, 0.56], [0.84, 0.71], [0.67, 0.42],
+               [0.88, 0.55], [0.70, 0.23]];
   /* 绕目标点的环形候选：讲解位要贴着正在讲的控件，所以先在小环（130/210/300px × 八向）
      里找最近的空位，环上没有才铺全屏网格。 */
   var RING = (function () {
@@ -414,7 +414,7 @@
      全屏零重叠位置只剩一条 y∈[72,134] 的窄带，62px 高，而满尺寸剪影约 69px——
      「没有干净位」是几何事实，不是解算器偷懒。这种时候继续按满尺寸站着，
      就等于坐在内容上面；把体积收小一档再落位，让步看得见、遮挡看不见。
-     剪影随 nav.size 线性缩放（渲染口径 S.scale = 1.32 * nav.size），但实测 footRaw
+     剪影随 nav.size 线性缩放（渲染口径 S.scale = 0.76 * nav.size），但实测 footRaw
      要等下一帧才更新，而缩位必须当场决定，所以按比例换算出「假设尺寸」的四象限。 */
   /* 地板取到 0.62：760×430 那条净空带只有 62px，要「带 6px 呼吸余量」站进去
      框高就得 ≤50，满尺寸 69 对应 0.72 只够贴缝站下（上一版就停在这里，
@@ -1318,7 +1318,7 @@
   }
 
   function renderNav(now) {
-    S.scale = 1.32 * nav.size;
+    S.scale = 0.76 * nav.size;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     cx = nav.x; cy = nav.y + navBob();
@@ -1755,12 +1755,14 @@
         alive = true; layer.style.display = 'block';
         S.hue = autoHue(bNow()); hueRGB = null;   /* 出生帧按当前场景取色，之后每帧跟随（hueStep） */
         /* 出生点也走同一套避让：面板可能已经开着（从别的节进来时不重开片头） */
-        var bp = placeBody(W * 0.62, H * 0.3, uiAvoid());
+        var bp = placeBody(W * 0.82, H * 0.25, uiAvoid());
         nav.x = nav.tx = bp.x; nav.y = nav.ty = bp.y;
         if (!greeted) {
           greeted = true;
           setState('wave', 2); setEmotion('happy');
-          say('我是星仔，今晚的领航员。我不待在框里——带你飞四站，把页面上那几个真控件都用一遍。', '带我飞一遍', function () { startTour(0); }, 15);
+          say(W < 600 ? '我是星仔，今晚的领航员。要我带你飞一遍吗？' :
+            '我是星仔，今晚的领航员。我不待在框里——带你飞四站，把页面上那几个真控件都用一遍。',
+            '带我飞一遍', function () { startTour(0); }, 15);
         }
       }
       update(dt, now);
